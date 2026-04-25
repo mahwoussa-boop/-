@@ -186,27 +186,34 @@ def extract_json(text: str) -> dict:
     return json.loads(text[start:end + 1])
 
 
-def call_gemini_brand(
-    brand_name: str,
-    products: list,
-    api_key: str,
-    model_name: str = 'gemini-2.0-flash',
-    use_grounding: bool = True,
-) -> dict:
-    """Call Gemini API for a single brand. Falls back without grounding if needed."""
-    genai.configure(api_key=api_key)
+# ─── BATCHING CONFIG ─────────────────────────────────────────────────────────
+BATCH_SIZE = 20            # منتجات لكل دفعة
+BATCH_SLEEP_SEC = 4        # استراحة بين الدفعات لتفادي Rate Limit
+MAX_RETRIES = 3            # عدد محاولات الإعادة لكل دفعة
+BACKUP_FILE = "mahwous_backup.json"
 
-    model_kwargs = dict(
-        model_name=model_name,
-        system_instruction=SYSTEM_INSTRUCTION,
-    )
-    if use_grounding:
-        model_kwargs['tools'] = [genai.protos.Tool(
-            google_search_retrieval=genai.protos.GoogleSearchRetrieval()
-        )]
 
-    model = genai.GenerativeModel(**model_kwargs)
+def _save_backup(brand_results: dict) -> None:
+    """احفظ نسخة احتياطية محلية بعد إكمال كل ماركة."""
+    try:
+        with open(BACKUP_FILE, 'w', encoding='utf-8') as f:
+            json.dump(brand_results, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass  # لا نوقف المعالجة بسبب فشل الحفظ
 
+
+def _load_backup() -> dict:
+    try:
+        if os.path.exists(BACKUP_FILE):
+            with open(BACKUP_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {}
+
+
+def _build_batch_prompt(brand_name: str, products: list, use_grounding: bool,
+                        batch_idx: int, total_batches: int) -> str:
     products_summary = json.dumps(
         [{'id': p.get('id', ''), 'name': p.get('name', ''),
           'price': p.get('price', 0),
@@ -214,28 +221,35 @@ def call_gemini_brand(
          for p in products],
         ensure_ascii=False, indent=2
     )
+    # المهمتان 2 و 3 (التساتر والنواقص) تُطلب فقط في الدفعة الأخيرة
+    # لتجنب التكرار، أما المهمة 1 فتُطلب لكل دفعة.
+    is_last = (batch_idx == total_batches - 1)
+    extra_tasks = ""
+    if is_last:
+        extra_tasks = f"""
+### المهمة 2: التساتر (للماركة كاملة)
+{f'ابحث الآن في الإنترنت عن عطور ماركة "{brand_name}" المتاحة كـ "تستر" في السوق السعودي.' if use_grounding else f'بناءً على معرفتك، أي عطور ماركة "{brand_name}" يتوفر منها تستر في الأسواق؟'}
+- قاعدة التسعير: خصم 70 ريال للمنتجات تحت 1000 ريال، خصم 150 ريال للمنتجات فوق 1000 ريال.
 
-    prompt = f"""أنت تعالج منتجات ماركة "{brand_name}" في متجر مهووس.
+### المهمة 3: النواقص (للماركة كاملة)
+{f'ابحث في الإنترنت عن عطور ماركة "{brand_name}" غير موجودة في قائمتي.' if use_grounding else f'بناءً على معرفتك، ما هي عطور ماركة "{brand_name}" الرئيسية غير الموجودة في قائمتي؟'}
+لكل منتج ناقص، اكتب بياناته الكاملة مع وصف HTML محسّن جاهز للرفع على سلة.
+"""
 
-عدد المنتجات الحالية: {len(products)}
+    return f"""أنت تعالج منتجات ماركة "{brand_name}" في متجر مهووس.
+
+هذه الدفعة رقم {batch_idx + 1} من أصل {total_batches}.
+عدد المنتجات في هذه الدفعة: {len(products)}
 
 قائمة المنتجات (ملخص):
 {products_summary}
 
-**المطلوب: 3 مهام**
+**المطلوب:**
 
-### المهمة 1: تحديث الأوصاف والسيو
+### المهمة 1: تحديث الأوصاف والسيو (لمنتجات هذه الدفعة فقط)
 لكل منتج حالي، اكتب وصفاً HTML احترافياً محسّناً للـ SEO كامل (1200-1500 كلمة) وفق هويتك كخبير مهووس. الوصف يجب أن يكون بـ HTML: <h2>, <h3>, <ul>, <li>, <strong>, <p>.
-
-### المهمة 2: التساتر
-{f'ابحث الآن في الإنترنت عن عطور ماركة "{brand_name}" المتاحة كـ "تستر" في السوق السعودي.' if use_grounding else f'بناءً على معرفتك، أي عطور ماركة "{brand_name}" يتوفر منها تستر في الأسواق؟'}
-- قاعدة التسعير: خصم 70 ريال للمنتجات تحت 1000 ريال، خصم 150 ريال للمنتجات فوق 1000 ريال.
-
-### المهمة 3: النواقص
-{f'ابحث في الإنترنت عن عطور ماركة "{brand_name}" غير موجودة في قائمتي.' if use_grounding else f'بناءً على معرفتك، ما هي عطور ماركة "{brand_name}" الرئيسية غير الموجودة في قائمتي؟'}
-لكل منتج ناقص، اكتب بياناته الكاملة مع وصف HTML محسّن جاهز للرفع على سلة.
-
-**أعد JSON صارم فقط يبدأ بـ {{ وينتهي بـ }} بلا أي نص خارجه:**
+{extra_tasks}
+**أعد JSON صارم فقط:**
 
 {{
   "brand": "{brand_name}",
@@ -271,13 +285,122 @@ def call_gemini_brand(
       "is_tester": false
     }}
   ]
-}}"""
+}}
+
+ملاحظة: في الدفعات غير الأخيرة، أعد testers_updated و missing_products كقوائم فارغة [].
+"""
+
+
+def _call_gemini_single_batch(
+    brand_name: str,
+    products: list,
+    api_key: str,
+    model_name: str,
+    use_grounding: bool,
+    batch_idx: int,
+    total_batches: int,
+) -> dict:
+    """نداء واحد للـ API لدفعة واحدة، مع response_mime_type=application/json."""
+    genai.configure(api_key=api_key)
+
+    model_kwargs = dict(
+        model_name=model_name,
+        system_instruction=SYSTEM_INSTRUCTION,
+    )
+    if use_grounding:
+        model_kwargs['tools'] = [genai.protos.Tool(
+            google_search_retrieval=genai.protos.GoogleSearchRetrieval()
+        )]
+
+    model = genai.GenerativeModel(**model_kwargs)
+
+    prompt = _build_batch_prompt(brand_name, products, use_grounding,
+                                 batch_idx, total_batches)
+
+    # Structured Outputs: إجبار JSON نقي
+    # ملاحظة: response_mime_type لا يتوافق مع google_search_retrieval في بعض الإصدارات،
+    # لذلك نُفعّله فقط حين لا يوجد grounding.
+    gen_config_kwargs = {'temperature': 0.0}
+    if not use_grounding:
+        gen_config_kwargs['response_mime_type'] = 'application/json'
 
     response = model.generate_content(
         prompt,
-        generation_config=genai.GenerationConfig(temperature=0.0),
+        generation_config=genai.GenerationConfig(**gen_config_kwargs),
     )
     return extract_json(response.text)
+
+
+def _call_batch_with_retry(*args, **kwargs) -> dict:
+    """إعادة المحاولة مع Exponential Backoff."""
+    last_err = None
+    for attempt in range(MAX_RETRIES):
+        try:
+            return _call_gemini_single_batch(*args, **kwargs)
+        except Exception as e:
+            last_err = e
+            if attempt < MAX_RETRIES - 1:
+                wait = (2 ** attempt) * 5  # 5s, 10s, 20s
+                time.sleep(wait)
+    raise last_err if last_err else RuntimeError("فشل غير معروف في الدفعة")
+
+
+def call_gemini_brand(
+    brand_name: str,
+    products: list,
+    api_key: str,
+    model_name: str = 'gemini-2.0-flash',
+    use_grounding: bool = True,
+    progress_cb=None,
+) -> dict:
+    """معالجة ماركة كاملة عبر دفعات صغيرة، مع دمج النتائج وحفظ احتياطي."""
+    if not products:
+        return {
+            'brand': brand_name,
+            'products_updated': [],
+            'testers_updated': [],
+            'missing_products': [],
+        }
+
+    batches = [products[i:i + BATCH_SIZE]
+               for i in range(0, len(products), BATCH_SIZE)]
+    total_batches = len(batches)
+
+    merged = {
+        'brand': brand_name,
+        'products_updated': [],
+        'testers_updated': [],
+        'missing_products': [],
+    }
+    failed_batches = []
+
+    for b_idx, batch in enumerate(batches):
+        if progress_cb:
+            progress_cb(b_idx, total_batches, 'start', None)
+        try:
+            part = _call_batch_with_retry(
+                brand_name, batch, api_key, model_name,
+                use_grounding, b_idx, total_batches,
+            )
+            merged['products_updated'].extend(part.get('products_updated', []) or [])
+            merged['testers_updated'].extend(part.get('testers_updated', []) or [])
+            merged['missing_products'].extend(part.get('missing_products', []) or [])
+            if progress_cb:
+                progress_cb(b_idx, total_batches, 'done', part)
+        except Exception as e:
+            failed_batches.append({'batch_idx': b_idx, 'error': str(e),
+                                   'product_ids': [p.get('id') for p in batch]})
+            if progress_cb:
+                progress_cb(b_idx, total_batches, 'failed', str(e))
+
+        # استراحة بين الدفعات (ليس بعد الأخيرة)
+        if b_idx < total_batches - 1:
+            time.sleep(BATCH_SLEEP_SEC)
+
+    if failed_batches:
+        merged['_failed_batches'] = failed_batches
+
+    return merged
 
 
 def build_output_excel(result: dict, original_df: pd.DataFrame, template_bytes: bytes) -> bytes:
@@ -448,6 +571,31 @@ with st.sidebar:
     if template_file:
         st.session_state.template_bytes = template_file.read()
         st.success("✅ تم تحميل القالب")
+
+    # ─── استرجاع نسخة احتياطية ───────────────────────────────────────────
+    if os.path.exists(BACKUP_FILE):
+        st.divider()
+        st.markdown("## 💾 النسخة الاحتياطية")
+        backup_data = _load_backup()
+        st.caption(f"📦 {len(backup_data)} ماركة محفوظة محلياً")
+        col_r1, col_r2 = st.columns(2)
+        with col_r1:
+            if st.button("♻️ استرجاع", use_container_width=True):
+                st.session_state.brand_results = backup_data
+                st.success(f"✅ تم استرجاع {len(backup_data)} ماركة")
+                st.rerun()
+        with col_r2:
+            try:
+                with open(BACKUP_FILE, 'rb') as _bf:
+                    st.download_button(
+                        "⬇️ تحميل",
+                        data=_bf.read(),
+                        file_name=BACKUP_FILE,
+                        mime="application/json",
+                        use_container_width=True,
+                    )
+            except Exception:
+                pass
 
     if uploaded_file and st.button("📊 تحليل الملف", use_container_width=True, type="primary"):
         with st.spinner("جاري تحليل الملف..."):
@@ -799,6 +947,7 @@ if st.session_state.waiting_confirm and st.session_state.current_result:
         use_container_width=True,
     ):
         st.session_state.brand_results[current_brand] = result
+        _save_backup(st.session_state.brand_results)  # حفظ احتياطي تلقائي
         st.session_state.current_brand_idx += 1
         st.session_state.waiting_confirm = False
         st.session_state.current_result = None
@@ -861,34 +1010,61 @@ status_msg = st.empty()
 brand_lbl.markdown("**الخطوة 1/3:** جاري تجهيز بيانات المنتجات...")
 brand_bar.progress(5)
 
-# Build products payload
+# Build products payload — تنظيف NaN قبل التحويل لـ JSON
+brand_df_clean = brand_df.fillna("")
 products_payload = []
 if name_col:
-    for _, row in brand_df.iterrows():
+    for _, row in brand_df_clean.iterrows():
+        try:
+            price_val = float(pd.to_numeric(row.get(price_col, 0), errors='coerce') or 0)
+        except Exception:
+            price_val = 0.0
         products_payload.append({
             'id': str(row.get('No.', row.name)),
             'name': str(row.get(name_col, '')),
-            'price': float(pd.to_numeric(row.get(price_col, 0), errors='coerce') or 0),
+            'price': price_val,
             'description': str(row.get(desc_col, ''))[:300] if desc_col else '',
         })
 
-# Simulate scanning products
 n = len(products_payload)
-for i in range(min(n, 30)):
-    prod_bar.progress((i + 1) / max(n, 1) * 0.4)
-    prod_lbl.markdown(f"📦 مسح المنتجات: {i + 1}/{n} — {products_payload[i]['name'][:45]}")
-    time.sleep(0.015)
+total_batches_est = max(1, (n + BATCH_SIZE - 1) // BATCH_SIZE)
 
-brand_bar.progress(25)
-brand_lbl.markdown("**الخطوة 2/3:** إرسال الطلب إلى Gemini AI + Google Search...")
-prod_bar.progress(0.5)
-prod_lbl.markdown("⏳ في انتظار استجابة Gemini AI...")
+brand_bar.progress(15)
+brand_lbl.markdown(
+    f"**الخطوة 2/3:** إرسال {n} منتج على {total_batches_est} دفعة "
+    f"(حجم الدفعة={BATCH_SIZE}) إلى Gemini AI..."
+)
+prod_bar.progress(0.0)
+prod_lbl.markdown("⏳ بدء معالجة الدفعات...")
 status_msg.info(
     f"🤖 يعمل الذكاء الاصطناعي على:\n"
-    f"- تحديث {n} وصف بكلمات مفتاحية SEO\n"
+    f"- تحديث {n} وصف بكلمات مفتاحية SEO (دفعات من {BATCH_SIZE})\n"
     f"- البحث عن التساتر المتاحة لـ {current_brand} في السوق السعودي\n"
-    f"- اكتشاف المنتجات الناقصة"
+    f"- اكتشاف المنتجات الناقصة\n"
+    f"- استراحة {BATCH_SLEEP_SEC} ثانية بين الدفعات لتفادي Rate Limit"
 )
+
+
+def _ui_progress(b_idx, total, phase, payload):
+    frac = b_idx / max(total, 1)
+    if phase == 'start':
+        prod_bar.progress(min(frac + 0.01, 1.0))
+        prod_lbl.markdown(
+            f"📦 الدفعة {b_idx + 1}/{total} — جاري الإرسال إلى Gemini..."
+        )
+    elif phase == 'done':
+        done_frac = (b_idx + 1) / max(total, 1)
+        prod_bar.progress(min(done_frac, 1.0))
+        n_p = len(payload.get('products_updated', [])) if payload else 0
+        prod_lbl.markdown(
+            f"✅ الدفعة {b_idx + 1}/{total} اكتملت — {n_p} وصف في هذه الدفعة"
+        )
+        brand_bar.progress(min(15 + int(done_frac * 70), 95))
+    elif phase == 'failed':
+        prod_lbl.markdown(
+            f"⚠️ الدفعة {b_idx + 1}/{total} فشلت بعد {MAX_RETRIES} محاولات — تم تجاوزها"
+        )
+
 
 try:
     result = call_gemini_brand(
@@ -897,6 +1073,7 @@ try:
         api_key=st.session_state.api_key,
         model_name=st.session_state.model_name,
         use_grounding=True,
+        progress_cb=_ui_progress,
     )
 
     brand_bar.progress(75)
@@ -942,6 +1119,7 @@ except Exception as e:
                 api_key=st.session_state.api_key,
                 model_name=st.session_state.model_name,
                 use_grounding=False,
+                progress_cb=_ui_progress,
             )
             brand_bar.progress(100)
             prod_bar.progress(1.0)
