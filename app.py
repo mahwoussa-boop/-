@@ -801,23 +801,32 @@ def build_output_excel(result: dict, original_df: pd.DataFrame, template_bytes: 
         match = original_df[original_df['No.'].astype(str) == str(base_id)]
         return match.iloc[0] if not match.empty else None
 
+    def _norm_hdr(s: str) -> str:
+        s = str(s).strip()
+        s = s.replace('أ', 'ا').replace('إ', 'ا').replace('آ', 'ا')
+        s = s.replace('ى', 'ي').replace('ة', 'ه')
+        return s
+
     def fill_mandatory(nr):
         for c in all_cols:
             cs = str(c).strip()
+            ns = _norm_hdr(cs)
             if 'نوع المنتج' in cs:
                 nr[c] = 'منتج جاهز'
             elif cs == 'النوع':
                 nr[c] = 'منتج'
             elif 'يتطلب شحن' in cs:
                 nr[c] = 'نعم'
-            elif 'أقصى كمية' in cs:
+            elif 'اقصي كميه' in ns or 'اقصى كميه' in ns:
                 nr[c] = 10  # Salla requires >= 1
-            elif 'الكمية' in cs:
+            elif 'الكمية' in cs or 'الكميه' in ns:
                 nr[c] = 10
             elif cs == 'الوزن':
                 nr[c] = 0.5  # Salla requires non-empty weight
-            elif 'وحدة الوزن' in cs:
-                nr[c] = 'كجم'
+            elif 'وحدة الوزن' in cs or 'وحده الوزن' in ns:
+                nr[c] = 'kg'  # Salla expects English unit code
+            elif 'إخفاء خيار' in cs or 'اخفاء خيار' in ns:
+                nr[c] = 'لا'
             elif 'الماركة' in cs and brand_col and c == brand_col:
                 nr[c] = brand_name
         return nr
@@ -958,6 +967,7 @@ def build_output_excel(result: dict, original_df: pd.DataFrame, template_bytes: 
         if not t_hdr:
             continue
         cs = str(t_hdr).strip()
+        ns = _norm_hdr(cs)
         if t_idx + 1 in col_map:
             continue  # already mapped from df
         if 'نوع المنتج' in cs:
@@ -966,21 +976,25 @@ def build_output_excel(result: dict, original_df: pd.DataFrame, template_bytes: 
             direct_template_values[t_idx + 1] = 'منتج'
         elif 'يتطلب شحن' in cs:
             direct_template_values[t_idx + 1] = 'نعم'
-        elif 'أقصى كمية' in cs:
+        elif 'اقصي كميه' in ns or 'اقصى كميه' in ns:
             direct_template_values[t_idx + 1] = 10
-        elif 'الكمية' in cs:
+        elif 'الكمية' in cs or 'الكميه' in ns:
             direct_template_values[t_idx + 1] = 10
         elif cs == 'الوزن':
             direct_template_values[t_idx + 1] = 0.5
-        elif 'وحدة الوزن' in cs:
-            direct_template_values[t_idx + 1] = 'كجم'
+        elif 'وحدة الوزن' in cs or 'وحده الوزن' in ns:
+            direct_template_values[t_idx + 1] = 'kg'
+        elif 'إخفاء خيار' in cs or 'اخفاء خيار' in ns:
+            direct_template_values[t_idx + 1] = 'لا'
         elif cs == 'تصنيف المنتج':
             direct_template_values[t_idx + 1] = 'العطور'
         elif 'الماركة' in cs:
             direct_template_values[t_idx + 1] = brand_name
 
+    last_written = data_start - 1
     for r_idx, (_, row) in enumerate(output_df.iterrows()):
         excel_row = data_start + r_idx
+        last_written = excel_row
         for t_col, df_col in col_map.items():
             val = row.get(df_col, '')
             try:
@@ -993,6 +1007,12 @@ def build_output_excel(result: dict, original_df: pd.DataFrame, template_bytes: 
             ws.cell(row=excel_row, column=t_col, value=val)
         for t_col, val in direct_template_values.items():
             ws.cell(row=excel_row, column=t_col, value=val)
+
+    # Wipe any leftover template demo rows below our data (e.g. the 'زارا/ملابس' sample row)
+    if ws.max_row > last_written:
+        for r in range(last_written + 1, ws.max_row + 1):
+            for c in range(1, ws.max_column + 1):
+                ws.cell(row=r, column=c, value=None)
 
     buf = io.BytesIO()
     wb.save(buf)
