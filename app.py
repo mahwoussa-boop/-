@@ -543,9 +543,40 @@ def call_gemini_brand(
 
     response = model.generate_content(
         prompt,
-        generation_config=genai.GenerationConfig(temperature=0.0),
+        generation_config=genai.GenerationConfig(
+            temperature=0.0,
+            max_output_tokens=32768,
+        ),
     )
-    return extract_json(response.text)
+
+    # Robust text extraction — response.text raises if no parts
+    text = ''
+    try:
+        text = response.text or ''
+    except Exception:
+        pass
+    if not text and getattr(response, 'candidates', None):
+        for cand in response.candidates:
+            content = getattr(cand, 'content', None)
+            if not content:
+                continue
+            for part in getattr(content, 'parts', []) or []:
+                t = getattr(part, 'text', '') or ''
+                if t:
+                    text += t
+
+    if not text.strip():
+        finish = ''
+        try:
+            finish = str(response.candidates[0].finish_reason)
+        except Exception:
+            pass
+        raise ValueError(
+            f"Gemini أعاد رداً فارغاً (finish_reason={finish}). "
+            f"غالباً السبب: تجاوز max_output_tokens أو فلتر أمان أو استجابة grounding بلا نص."
+        )
+
+    return extract_json(text)
 
 
 def _normalize_perfume_name(name: str) -> str:
