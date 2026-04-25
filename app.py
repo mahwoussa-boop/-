@@ -626,27 +626,34 @@ def call_gemini_brand(
 
 
 def _normalize_perfume_name(name: str) -> str:
-    """Aggressively crush 'trick words' the LLM uses to bypass dedupe filters."""
     if not name:
         return ''
     s = str(name).lower().strip()
-    s = re.sub(r'[ً-ٰٟ]', '', s)
+    s = re.sub(r'[ً-ٰٟ]', '', s)
     s = re.sub(r'[^\w؀-ۿ\s]', ' ', s)
+
+    # MUST happen FIRST: Remove 'ال' prefix so words like 'النسائي' become 'نسائي'
+    s = re.sub(r'ال', '', s)
+
     junk_words = [
-        'للرجال', 'للنساء', 'رجالي', 'نسائي',
-        'عطر', 'تستر', 'tester', 'مل', 'ml', 'بخاخ', 'spray',
-        'للجنسين', 'unisex', 'قديم', 'جديد'
+        'للرجال', 'للنساء', 'رجالي', 'نسائي', 'عطر', 'تستر', 'tester',
+        'مل', 'ml', 'بخاخ', 'spray', 'للجنسين', 'unisex', 'قديم', 'جديد'
     ]
     for w in junk_words:
         s = re.sub(fr'{w}', '', s)
+
+    # Remove all digits (sizes like 100, 80, 50)
     s = re.sub(r'\d+', '', s)
+
+    # Full dictionary (restored missing variations)
     replacements = {
-        'eau de parfum': 'edp', 'بارفيوم': 'edp', 'parfum': 'edp',
-        'eau de toilette': 'edt', 'تواليت': 'edt', 'إنتنس': 'intense',
+        'eau de parfum': 'edp', 'أو دو بارفان': 'edp', 'بارفان': 'edp', 'بارفيوم': 'edp', 'parfum': 'edp',
+        'eau de toilette': 'edt', 'أو دو تواليت': 'edt', 'تواليت': 'edt', 'إنتنس': 'intense', 'انتنس': 'intense'
     }
     for k, v in replacements.items():
         s = s.replace(k, v)
-    s = re.sub(r'ال', '', s)
+
+    # Remove all whitespace to force strict match
     return re.sub(r'\s+', '', s).strip()
 
 
@@ -736,44 +743,37 @@ def filter_duplicates(result: dict, existing_products: list) -> dict:
 
 
 def merge_batch_results(accum: dict, new: dict) -> dict:
-    """Merge a batch into the brand accumulator, blocking duplicates by id and normalized name."""
+    # If accum is empty, initialize it with empty arrays, DO NOT just return new
     if not accum:
-        # Ensure the canonical keys exist with list defaults
-        return {
+        accum = {
             'brand': new.get('brand', ''),
             'products_updated': [],
-            'testers_to_add': list(new.get('testers_to_add', []) or []),
-            'orphan_testers': list(new.get('orphan_testers', []) or []),
-            'missing_products': list(new.get('missing_products', []) or []),
+            'testers_to_add': [],
+            'orphan_testers': [],
+            'missing_products': []
         }
 
-    accum.setdefault('testers_to_add', [])
-    accum.setdefault('orphan_testers', [])
-    accum.setdefault('missing_products', [])
-
-    # 1. testers_to_add — block by base_product_id
-    existing_ids = {str(t.get('base_product_id', '') or '') for t in accum['testers_to_add']}
-    for t in new.get('testers_to_add', []) or []:
-        bid = str(t.get('base_product_id', '') or '')
+    # 1. Hard filter for testers
+    existing_ids = {str(t.get('base_product_id', '')) for t in accum.get('testers_to_add', [])}
+    for t in new.get('testers_to_add', []):
+        bid = str(t.get('base_product_id', ''))
         if bid and bid not in existing_ids:
             accum['testers_to_add'].append(t)
             existing_ids.add(bid)
 
-    # 2. orphan_testers — block by tester_product_id
-    existing_orphan_ids = {o.get('tester_product_id') for o in accum['orphan_testers']}
-    for o in new.get('orphan_testers', []) or []:
-        oid = o.get('tester_product_id')
-        if oid not in existing_orphan_ids:
-            accum['orphan_testers'].append(o)
-            existing_orphan_ids.add(oid)
-
-    # 3. missing_products — block by normalized name
-    existing_norms = {_normalize_perfume_name(m.get('name', '')) for m in accum['missing_products']}
-    for m in new.get('missing_products', []) or []:
+    # 2. Hard filter for missing products (Internal Deduplication)
+    existing_norms = {_normalize_perfume_name(m.get('name', '')) for m in accum.get('missing_products', [])}
+    for m in new.get('missing_products', []):
         norm = _normalize_perfume_name(m.get('name', ''))
         if norm and norm not in existing_norms:
             accum['missing_products'].append(m)
             existing_norms.add(norm)
+
+    # Also copy products_updated and orphan_testers if any
+    if 'products_updated' in new:
+        accum['products_updated'].extend(new['products_updated'])
+    if 'orphan_testers' in new:
+        accum['orphan_testers'].extend(new['orphan_testers'])
 
     return accum
 
@@ -792,36 +792,56 @@ def build_output_excel(result: dict, original_df: pd.DataFrame, template_bytes: 
     all_cols = list(original_df.columns)
     rows = []
 
+    def fill_mandatory_salla_fields(nr_dict):
+        for c in all_cols:
+            c_str = str(c).strip()
+            if c_str == 'نوع المنتج':
+                nr_dict[c] = 'منتج جاهز'
+            elif c_str == 'النوع' or c_str == 'النوع ':
+                nr_dict[c] = 'منتج'
+            elif c_str == 'هل يتطلب شحن؟' or c_str == 'يتطلب شحن':
+                nr_dict[c] = 'نعم'
+            elif c_str == 'الكمية المتوفرة' or c_str == 'الكمية':
+                nr_dict[c] = 10
+        return nr_dict
+
     for tester in result.get('testers_to_add', []):
         nr = {c: '' for c in all_cols}
+        nr = fill_mandatory_salla_fields(nr)
+
         if name_col:  nr[name_col] = tester.get('name', '')
         if price_col: nr[price_col] = tester.get('new_price', 0)
         if desc_col:  nr[desc_col] = tester.get('new_description', '')
         if brand_col: nr[brand_col] = brand_name
-        if cat_col:   nr[cat_col] = 'العطور > عطور التساتر'
-        if qty_col:   nr[qty_col] = 10
+
+        cat_val = ''
+        if tester.get('base_product_id') and cat_col and 'No.' in original_df.columns:
+            base_match = original_df[original_df['No.'].astype(str) == str(tester['base_product_id'])]
+            if not base_match.empty:
+                cat_val = str(base_match.iloc[0].get(cat_col, '') or '')
+        if cat_col: nr[cat_col] = cat_val
+
         if img_col:
             img = tester.get('image_url', '')
             if not img and tester.get('base_product_id') and 'No.' in original_df.columns:
-                base_match = original_df[
-                    original_df['No.'].astype(str) == str(tester['base_product_id'])
-                ]
+                base_match = original_df[original_df['No.'].astype(str) == str(tester['base_product_id'])]
                 if not base_match.empty:
                     raw_img = str(base_match.iloc[0].get(img_col, '') or '')
                     img = raw_img.split(',')[0].strip()
             nr[img_col] = img
+
         rows.append(pd.Series(nr))
 
     for missing in result.get('missing_products', []):
         nr = {c: '' for c in all_cols}
+        nr = fill_mandatory_salla_fields(nr)
+
         if name_col:  nr[name_col] = missing.get('name', '')
         if price_col: nr[price_col] = missing.get('price', 0)
         if desc_col:  nr[desc_col] = missing.get('description', '')
         if brand_col: nr[brand_col] = missing.get('brand', brand_name)
         if cat_col:   nr[cat_col] = missing.get('category', '')
-        if qty_col:   nr[qty_col] = 10
         if img_col:
-            # Defense in depth: dict.get with default '' even if LLM omitted the key
             img1 = missing.get('image_url_1', '') or ''
             img2 = missing.get('image_url_2', '') or ''
             imgs = [str(img1).strip(), str(img2).strip()]
@@ -830,11 +850,8 @@ def build_output_excel(result: dict, original_df: pd.DataFrame, template_bytes: 
 
     output_df = pd.DataFrame(rows) if rows else pd.DataFrame(columns=all_cols)
 
-    # Load template and write
     wb = load_workbook(io.BytesIO(template_bytes))
 
-    # Salla rejects files with extra sheets (Categories/Types/Brands) — nuke anything
-    # that isn't the active products sheet.
     active_title = wb.active.title
     for sheet_name in list(wb.sheetnames):
         if sheet_name != active_title:
@@ -842,7 +859,6 @@ def build_output_excel(result: dict, original_df: pd.DataFrame, template_bytes: 
 
     ws = wb.active
 
-    # Find header row (row with 'اسم' or 'No.' cells)
     header_row = 2
     for i, row in enumerate(ws.iter_rows(min_row=1, max_row=6, values_only=True), 1):
         if any(cell and ('اسم' in str(cell) or cell == 'No.') for cell in row):
@@ -855,18 +871,17 @@ def build_output_excel(result: dict, original_df: pd.DataFrame, template_bytes: 
         for c in range(1, ws.max_column + 1)
     ]
 
-    # Map template columns to output_df columns
+    # Strict literal match — prevents image URL leaking into 'وصف صورة المنتج'
     col_map = {}
     for t_idx, t_hdr in enumerate(template_headers):
         if not t_hdr:
             continue
-        t_str = str(t_hdr)
+        t_str = str(t_hdr).strip()
         for df_col in output_df.columns:
-            if t_str in str(df_col) or str(df_col) in t_str:
+            if t_str == str(df_col).strip():
                 col_map[t_idx + 1] = df_col
                 break
 
-    # Write rows
     for r_idx, (_, row) in enumerate(output_df.iterrows()):
         excel_row = data_start + r_idx
         for t_col, df_col in col_map.items():
@@ -881,7 +896,6 @@ def build_output_excel(result: dict, original_df: pd.DataFrame, template_bytes: 
     return buf.read()
 
 
-# ─── SESSION STATE INIT ───────────────────────────────────────────────────────
 def init_state():
     defaults = {
         'df': None,
