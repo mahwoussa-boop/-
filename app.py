@@ -8,7 +8,8 @@ import time
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
-import google.generativeai as genai
+from google import genai
+from google.genai import types as genai_types
 from openpyxl import load_workbook
 
 # ─── PAGE CONFIG ─────────────────────────────────────────────────────────────
@@ -425,7 +426,7 @@ def call_gemini_brand(
     - `include_missing_search`: only True for the first batch — the brand-wide gap
       analysis runs once to avoid duplicate suggestions across batches.
     """
-    genai.configure(api_key=api_key)
+    client = genai.Client(api_key=api_key)
 
     system_instruction = SYSTEM_INSTRUCTION_TEMPLATE.format(
         writing_dna=writing_dna,
@@ -433,17 +434,6 @@ def call_gemini_brand(
         HTML_TEMPLATE_TESTER=HTML_TEMPLATE_TESTER,
         competitors_json=json.dumps(COMPETITOR_STORES, ensure_ascii=False),
     )
-
-    model_kwargs = dict(
-        model_name=model_name,
-        system_instruction=system_instruction,
-    )
-    if use_grounding:
-        model_kwargs['tools'] = [genai.protos.Tool(
-            google_search_retrieval=genai.protos.GoogleSearchRetrieval()
-        )]
-
-    model = genai.GenerativeModel(**model_kwargs)
 
     base_perfumes = [p for p in full_brand_products if not is_tester(p.get('name', ''))]
     tester_products = [p for p in full_brand_products if is_tester(p.get('name', ''))]
@@ -552,27 +542,32 @@ def call_gemini_brand(
   ]
 }}"""
 
-    gen_config_kwargs = dict(
+    config_kwargs = dict(
+        system_instruction=system_instruction,
         temperature=0.0,
         max_output_tokens=65536,
     )
-    # Force valid JSON output when not using grounding (incompatible with tools)
-    if not use_grounding:
-        gen_config_kwargs['response_mime_type'] = 'application/json'
+    if use_grounding:
+        config_kwargs['tools'] = [genai_types.Tool(google_search=genai_types.GoogleSearch())]
+    else:
+        config_kwargs['response_mime_type'] = 'application/json'
 
-    response = model.generate_content(
-        prompt,
-        generation_config=genai.GenerationConfig(**gen_config_kwargs),
-        stream=True,
+    config = genai_types.GenerateContentConfig(**config_kwargs)
+
+    stream = client.models.generate_content_stream(
+        model=model_name,
+        contents=prompt,
+        config=config,
     )
 
-    # Stream chunks for live UI feedback
     text = ''
-    for chunk in response:
+    last_chunk = None
+    for chunk in stream:
+        last_chunk = chunk
+        t = ''
         try:
             t = chunk.text or ''
         except Exception:
-            t = ''
             for cand in getattr(chunk, 'candidates', []) or []:
                 content = getattr(cand, 'content', None)
                 if not content:
@@ -590,8 +585,8 @@ def call_gemini_brand(
     finish = ''
     safety = ''
     try:
-        finish = str(response.candidates[0].finish_reason)
-        safety = str(getattr(response.candidates[0], 'safety_ratings', ''))[:200]
+        finish = str(last_chunk.candidates[0].finish_reason) if last_chunk else ''
+        safety = str(getattr(last_chunk.candidates[0], 'safety_ratings', ''))[:200] if last_chunk else ''
     except Exception:
         pass
 
@@ -833,9 +828,19 @@ with st.sidebar:
 
     model_name = st.selectbox(
         "🤖 النموذج",
-        ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.5-flash-lite', 'gemini-1.5-pro', 'gemini-1.5-flash'],
+        [
+            'gemini-3-flash-preview',       # الأسرع من الجيل الجديد
+            'gemini-3.1-pro-preview',       # الأدق — Gen 3
+            'gemini-3-pro-preview',
+            'gemini-flash-latest',          # alias لأحدث flash مستقر
+            'gemini-pro-latest',
+            'gemini-2.5-flash',
+            'gemini-2.5-pro',
+            'gemini-2.5-flash-lite',
+            'gemini-2.0-flash',
+        ],
         index=0,
-        help="gemini-2.5-flash: أسرع وأرخص | gemini-2.5-pro: أدق وأشمل",
+        help="3-flash-preview: أسرع وأقوى | 3.1-pro-preview: أدق للبحث المعقد | 2.5-flash: مستقر ومضمون",
     )
     st.session_state.model_name = model_name
 
@@ -1322,6 +1327,10 @@ if os.path.exists(autosave_path):
 completed_set = set(accumulated.get('_completed_batch_ids', []))
 
 # ─── PARALLEL EXECUTION WITH LIVE STATUS ─────────────────────────────────────
+# Capture session_state values BEFORE threading — workers can't access st.session_state
+_api_key_val = st.session_state.api_key
+_model_name_val = st.session_state.model_name
+
 status_lock = threading.Lock()
 batch_status = {
     i: {
@@ -1349,9 +1358,9 @@ def _run_one(b_idx):
         brand_name=current_brand,
         products=batches[b_idx],
         full_brand_products=products_payload,
-        api_key=st.session_state.api_key,
+        api_key=_api_key_val,
         writing_dna=writing_dna,
-        model_name=st.session_state.model_name,
+        model_name=_model_name_val,
         batch_index=b_idx,
         total_batches=total_batches,
         progress_cb=cb,
