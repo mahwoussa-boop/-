@@ -385,14 +385,19 @@ def extract_json(text: str) -> dict:
     try:
         return json.loads(body, strict=False)
     except json.JSONDecodeError:
-        # Repair: remove trailing commas before } or ]
-        repaired = re.sub(r',(\s*[}\]])', r'\1', body)
-        try:
-            return json.loads(repaired, strict=False)
-        except json.JSONDecodeError:
-            # Repair: escape lone backslashes and stray control chars in strings
-            repaired2 = re.sub(r'(?<!\\)\\(?![\\/"bfnrtu])', r'\\\\', repaired)
-            return json.loads(repaired2, strict=False)
+        pass
+    # Use json_repair (handles LLM-broken JSON: unescaped quotes, trailing commas, etc.)
+    try:
+        from json_repair import repair_json
+        repaired = repair_json(body, return_objects=True)
+        if isinstance(repaired, dict):
+            return repaired
+    except Exception:
+        pass
+    # Fallback regex repairs
+    repaired = re.sub(r',(\s*[}\]])', r'\1', body)
+    repaired = re.sub(r'(?<!\\)\\(?![\\/"bfnrtu])', r'\\\\', repaired)
+    return json.loads(repaired, strict=False)
 
 
 def call_gemini_brand(
@@ -541,12 +546,17 @@ def call_gemini_brand(
   ]
 }}"""
 
+    gen_config_kwargs = dict(
+        temperature=0.0,
+        max_output_tokens=32768,
+    )
+    # Force valid JSON output when not using grounding (incompatible with tools)
+    if not use_grounding:
+        gen_config_kwargs['response_mime_type'] = 'application/json'
+
     response = model.generate_content(
         prompt,
-        generation_config=genai.GenerationConfig(
-            temperature=0.0,
-            max_output_tokens=32768,
-        ),
+        generation_config=genai.GenerationConfig(**gen_config_kwargs),
     )
 
     # Robust text extraction — response.text raises if no parts
