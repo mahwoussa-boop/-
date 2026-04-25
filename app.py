@@ -516,13 +516,16 @@ def call_gemini_brand(
 - اقترح فقط المنتجات المتوفرة للشراء الآن مع ذكر المتجر المصدر
 - لكل منتج مقترح: اكتب وصفاً كاملاً بقالب العطور الجديدة
 
-## استراتيجية البحث الإلزامية
-لكل منتج تبحث عنه، نفّذ بالترتيب:
-1. ابحث بـ: "{brand_name} [اسم العطر] [حجم المل] Saudi"
-2. ابحث بـ: "[اسم العطر] عطر [الماركة] سعودي"
-3. ابحث في: noon.com و goldenscent.com و niceonesa.com على الأقل
-4. تحقق من الموقع الرسمي للماركة ({brand_name} official site) إذا كانت ماركة عالمية كبرى
-لا تكتفِ بنتيجة واحدة. ابحث على الأقل في 3 متاجر مختلفة لكل منتج.
+## ⚠️ استراتيجية البحث الإلزامية — لا تتجاوزها
+لكل عطر تبحث عنه، **افتح هذه المتاجر بالترتيب** وابحث فيها فعلياً:
+1. https://www.noon.com/saudi-ar/ — ابحث: "[اسم العطر] {brand_name}"
+2. https://en.ounass.com/saudi-arabia/ — ابحث: "{brand_name} perfume"
+3. https://www.goldenscent.com/ — ابحث مباشرةً باسم العطر
+4. https://niceonesa.com/ — ابحث مباشرةً باسم العطر
+5. https://www.amazon.sa/ — ابحث: "{brand_name} [perfume name] عطر"
+
+**قاعدة صارمة:** لا تكتفِ بمتجرَين. إذا لم تجد في الأول، انتقل للثاني والثالث.
+**إذا وجدت المنتج في noon أو ounass — هذا اكتشاف ممتاز، سجّله.**
 
 ## ⚠️ تحذير نهائي قبل الإخراج
 - قبل إرجاع JSON، راجع المصفوفات وتأكد:
@@ -650,6 +653,19 @@ def _normalize_perfume_name(name: str) -> str:
     if not name:
         return ''
     s = str(name).lower().strip()
+    _arabic_num_map = {
+        'ون': '1', 'واحد': '1', 'وان': '1',
+        'تو': '2', 'اثنين': '2', 'اثنان': '2',
+        'ثري': '3', 'ثلاثة': '3', 'ثلاث': '3',
+        'فور': '4', 'اربعة': '4', 'اربع': '4',
+        'فايف': '5', 'خمسة': '5', 'خمس': '5',
+        'سيكس': '6', 'ستة': '6',
+        'سيفن': '7', 'سبعة': '7',
+        'ايت': '8', 'ثمانية': '8',
+        'ناين': '9', 'تسعة': '9', 'تسع': '9',
+        'تن': '10', 'عشرة': '10', 'عشر': '10',
+    }
+    s = ' '.join(_arabic_num_map.get(w, w) for w in s.split())
     s = re.sub(r'[ً-ٰٟ]', '', s)
     s = re.sub(r'[^\w؀-ۿ\s]', ' ', s)
 
@@ -839,18 +855,27 @@ def build_output_excel(result: dict, original_df: pd.DataFrame, template_bytes: 
             elif 'يتطلب شحن' in cs:
                 nr[c] = 'نعم'
             elif 'اقصي كميه' in ns or 'اقصى كميه' in ns:
-                nr[c] = 10  # Salla requires >= 1
+                nr[c] = 2  # Salla requires >= 1
             elif 'الكمية' in cs or 'الكميه' in ns:
                 nr[c] = 10
             elif cs == 'الوزن':
-                nr[c] = 0.5  # Salla requires non-empty weight
+                nr[c] = 1
             elif 'وحدة الوزن' in cs or 'وحده الوزن' in ns:
-                nr[c] = 'kg'  # Salla expects English unit code
+                nr[c] = 'kg'
             elif 'إخفاء خيار' in cs or 'اخفاء خيار' in ns:
-                nr[c] = 0
+                nr[c] = 'لا'
             elif 'الماركة' in cs and brand_col and c == brand_col:
                 nr[c] = brand_name
         return nr
+
+    def _clean_category(cat: str) -> str:
+        if not cat:
+            return cat
+        parts = [p.strip() for p in str(cat).split(',') if p.strip()]
+        if not parts:
+            return cat
+        hierarchical = [p for p in parts if '>' in p]
+        return hierarchical[0] if hierarchical else max(parts, key=len)
 
     def safe(v, default=''):
         if v is None:
@@ -882,9 +907,9 @@ def build_output_excel(result: dict, original_df: pd.DataFrame, template_bytes: 
             cat_val = safe(base_r.get(cat_col, ''), '')
         if cat_col:
             if cat_val:
-                nr[cat_col] = cat_val
+                nr[cat_col] = _clean_category(cat_val)
             elif not original_df[cat_col].dropna().empty:
-                nr[cat_col] = original_df[cat_col].dropna().mode().iloc[0]
+                nr[cat_col] = _clean_category(original_df[cat_col].dropna().mode().iloc[0])
             else:
                 nr[cat_col] = 'العطور'
 
@@ -910,9 +935,9 @@ def build_output_excel(result: dict, original_df: pd.DataFrame, template_bytes: 
         cat_val = safe(m.get('category', ''), '')
         if cat_col:
             if cat_val:
-                nr[cat_col] = cat_val
+                nr[cat_col] = _clean_category(cat_val)
             elif not original_df[cat_col].dropna().empty:
-                nr[cat_col] = original_df[cat_col].dropna().mode().iloc[0]
+                nr[cat_col] = _clean_category(original_df[cat_col].dropna().mode().iloc[0])
             else:
                 nr[cat_col] = 'العطور'
 
@@ -1008,15 +1033,15 @@ def build_output_excel(result: dict, original_df: pd.DataFrame, template_bytes: 
         elif 'يتطلب شحن' in cs:
             direct_template_values[t_idx + 1] = 'نعم'
         elif 'اقصي كميه' in ns or 'اقصى كميه' in ns:
-            direct_template_values[t_idx + 1] = 10
+            direct_template_values[t_idx + 1] = 2
         elif 'الكمية' in cs or 'الكميه' in ns:
             direct_template_values[t_idx + 1] = 10
         elif cs == 'الوزن':
-            direct_template_values[t_idx + 1] = 0.5
+            direct_template_values[t_idx + 1] = 1
         elif 'وحدة الوزن' in cs or 'وحده الوزن' in ns:
             direct_template_values[t_idx + 1] = 'kg'
         elif 'إخفاء خيار' in cs or 'اخفاء خيار' in ns:
-            direct_template_values[t_idx + 1] = 0
+            direct_template_values[t_idx + 1] = 'لا'
         elif 'الماركة' in cs:
             direct_template_values[t_idx + 1] = brand_name
 
