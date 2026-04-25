@@ -188,7 +188,19 @@ SYSTEM_INSTRUCTION_TEMPLATE = """## هويتك ومهمتك
 - إذا لم تجد معلومة موثوقة، اترك الحقل فارغاً
 - كل مقترح يجب أن يكون موجوداً في متجر سعودي محدد
 
-## المتاجر السعودية للمقارنة:
+## 🚫 ممنوع التكرار الداخلي (قواعد صارمة)
+- ممنوع منعاً باتاً تكرار نفس العطر أو التستر داخل المصفوفة. إذا وجدت العطر في أكثر من متجر منافس، اختر المتجر الأفضل أو الأرخص واذكره **مرة واحدة فقط**، وتجاهل البقية تماماً.
+- لا تكرر نفس base_product_id في testers_to_add. كل base_product_id يظهر مرة واحدة فقط مهما تعددت المتاجر التي تبيع التستر.
+- لا تكرر نفس المنتج في missing_products بصيغ مختلفة (مثل "Fame Parfum 80ml" و "فيم بارفان 80 مل") — كلها نفس المنتج، اذكره مرة واحدة فقط.
+
+## 🏷️ صرامة أسماء المتاجر
+- يجب أن يكون حقل source_store منسوخاً **حرفياً** من قائمة المتاجر competitors_json المتوفرة لك أدناه. لا تخترع أسماء نطاقات (مثل niceonesa.com) أو صيغ أخرى (مثل "Nice One"). انسخ القيمة كما هي تماماً من القائمة.
+
+## 📐 صرامة مخطط JSON
+- يجب أن تحتوي **جميع** عناصر missing_products على الحقلين image_url_1 و image_url_2 بشكل دائم. إذا لم تجد صورة ثانية، اجعل قيمتها سلسلة نصية فارغة "" — ولا تحذف المفتاح أبداً.
+- جميع المفاتيح المذكورة في مخطط الإخراج إلزامية في كل عنصر؛ القيم الفارغة تُمثَّل بـ "" أو 0 وليس بحذف المفتاح.
+
+## المتاجر السعودية للمقارنة (انسخ source_store حرفياً من هذه القائمة):
 {competitors_json}
 
 ## قواعد التسعير
@@ -492,6 +504,13 @@ def call_gemini_brand(
 - اقترح فقط المنتجات المتوفرة للشراء الآن مع ذكر المتجر المصدر
 - لكل منتج مقترح: اكتب وصفاً كاملاً بقالب العطور الجديدة
 
+## ⚠️ تحذير نهائي قبل الإخراج
+- قبل إرجاع JSON، راجع المصفوفات وتأكد:
+  1. لا يوجد base_product_id مكرر داخل testers_to_add (واحد فقط لكل عطر).
+  2. لا يوجد منتج مكرر داخل missing_products بأي صيغة (عربي/إنجليزي/أحجام مختلفة بنفس المنتج).
+  3. حقل source_store منسوخ حرفياً من قائمة المتاجر — لا اختراع.
+  4. كل عنصر في missing_products يحتوي image_url_1 و image_url_2 (الثاني قد يكون "" لكنه موجود).
+
 **أعد JSON صارم فقط:**
 
 {{
@@ -633,28 +652,87 @@ def _normalize_perfume_name(name: str) -> str:
 
 
 def filter_duplicates(result: dict, existing_products: list) -> dict:
-    """Remove suggestions that already exist in our catalog (defense in depth)."""
+    """Hard safety net against LLM hallucinations.
+
+    Step 1 — INTERNAL deduplication inside the freshly generated payload:
+      * testers_to_add: keep only the first occurrence per base_product_id
+        (and per normalized name as a secondary guard).
+      * missing_products: keep only the first occurrence per normalized name.
+    Step 2 — drop any remaining items that already exist in our catalog.
+    Step 3 — guarantee schema keys exist (image_url_2 stays as "" if missing).
+    """
     existing_norms = {_normalize_perfume_name(p.get('name', '')) for p in existing_products}
 
-    def not_dup(item):
-        norm = _normalize_perfume_name(item.get('name', ''))
+    def matches_existing(norm: str) -> bool:
         if not norm:
-            return False
-        # Token-overlap check: if all tokens of an existing match are in our suggestion
+            return True  # drop empty-name items as well
         for ex in existing_norms:
             if not ex:
                 continue
             if norm == ex or (len(ex) > 8 and ex in norm) or (len(norm) > 8 and norm in ex):
-                return False
-        return True
+                return True
+        return False
 
-    if 'missing_products' in result:
-        result['missing_products'] = [m for m in result['missing_products'] if not_dup(m)]
-    if 'testers_to_add' in result:
-        result['testers_to_add'] = [t for t in result['testers_to_add'] if not_dup(t)]
-    if 'testers_updated' in result:
-        kept = [t for t in result['testers_updated'] if not t.get('is_new') or not_dup(t)]
+    # ── testers_to_add: dedupe by base_product_id, then by normalized name
+    if 'testers_to_add' in result and isinstance(result['testers_to_add'], list):
+        seen_base_ids: set = set()
+        seen_tester_norms: set = set()
+        deduped_testers = []
+        for t in result['testers_to_add']:
+            if not isinstance(t, dict):
+                continue
+            base_id = str(t.get('base_product_id', '') or '').strip()
+            norm = _normalize_perfume_name(t.get('name', ''))
+            if base_id and base_id in seen_base_ids:
+                continue
+            if norm and norm in seen_tester_norms:
+                continue
+            if matches_existing(norm):
+                continue
+            if base_id:
+                seen_base_ids.add(base_id)
+            if norm:
+                seen_tester_norms.add(norm)
+            deduped_testers.append(t)
+        result['testers_to_add'] = deduped_testers
+
+    # ── missing_products: dedupe by normalized name, enforce schema keys
+    if 'missing_products' in result and isinstance(result['missing_products'], list):
+        seen_missing_norms: set = set()
+        deduped_missing = []
+        for m in result['missing_products']:
+            if not isinstance(m, dict):
+                continue
+            norm = _normalize_perfume_name(m.get('name', ''))
+            if not norm or norm in seen_missing_norms:
+                continue
+            if matches_existing(norm):
+                continue
+            # Schema guarantee — never let image_url_2 be missing
+            m.setdefault('image_url_1', '')
+            m.setdefault('image_url_2', '')
+            if m.get('image_url_2') is None:
+                m['image_url_2'] = ''
+            seen_missing_norms.add(norm)
+            deduped_missing.append(m)
+        result['missing_products'] = deduped_missing
+
+    # ── testers_updated (legacy): keep existing-vs-catalog logic
+    if 'testers_updated' in result and isinstance(result['testers_updated'], list):
+        kept = []
+        seen_upd: set = set()
+        for t in result['testers_updated']:
+            if not isinstance(t, dict):
+                continue
+            norm = _normalize_perfume_name(t.get('name', ''))
+            if norm in seen_upd:
+                continue
+            if t.get('is_new') and matches_existing(norm):
+                continue
+            seen_upd.add(norm)
+            kept.append(t)
         result['testers_updated'] = kept
+
     return result
 
 
@@ -741,7 +819,10 @@ def build_output_excel(result: dict, original_df: pd.DataFrame, template_bytes: 
         if cat_col:   nr[cat_col] = missing.get('category', '')
         if qty_col:   nr[qty_col] = 10
         if img_col:
-            imgs = [missing.get('image_url_1', ''), missing.get('image_url_2', '')]
+            # Defense in depth: dict.get with default '' even if LLM omitted the key
+            img1 = missing.get('image_url_1', '') or ''
+            img2 = missing.get('image_url_2', '') or ''
+            imgs = [str(img1).strip(), str(img2).strip()]
             nr[img_col] = ','.join(u for u in imgs if u)
         rows.append(pd.Series(nr))
 
@@ -749,6 +830,14 @@ def build_output_excel(result: dict, original_df: pd.DataFrame, template_bytes: 
 
     # Load template and write
     wb = load_workbook(io.BytesIO(template_bytes))
+
+    # Drop extra sheets (Categories, Types, Brands) — keep only the products sheet
+    EXTRA_SHEETS = {'categories', 'types', 'brands',
+                    'التصنيفات', 'الأنواع', 'الانواع', 'الماركات', 'الفئات'}
+    for sheet_name in list(wb.sheetnames):
+        if sheet_name.strip().lower() in EXTRA_SHEETS and len(wb.sheetnames) > 1:
+            del wb[sheet_name]
+
     ws = wb.active
 
     # Find header row (row with 'اسم' or 'No.' cells)
