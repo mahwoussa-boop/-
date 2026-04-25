@@ -5,6 +5,8 @@ import io
 import os
 import re
 import time
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 import google.generativeai as genai
 from openpyxl import load_workbook
@@ -413,6 +415,7 @@ def call_gemini_brand(
     use_grounding: bool = True,
     batch_index: int = 0,
     total_batches: int = 1,
+    progress_cb=None,
 ) -> dict:
     """Call Gemini API for a single brand batch.
 
@@ -560,23 +563,29 @@ def call_gemini_brand(
     response = model.generate_content(
         prompt,
         generation_config=genai.GenerationConfig(**gen_config_kwargs),
+        stream=True,
     )
 
-    # Robust text extraction — response.text raises if no parts
+    # Stream chunks for live UI feedback
     text = ''
-    try:
-        text = response.text or ''
-    except Exception:
-        pass
-    if not text and getattr(response, 'candidates', None):
-        for cand in response.candidates:
-            content = getattr(cand, 'content', None)
-            if not content:
-                continue
-            for part in getattr(content, 'parts', []) or []:
-                t = getattr(part, 'text', '') or ''
-                if t:
-                    text += t
+    for chunk in response:
+        try:
+            t = chunk.text or ''
+        except Exception:
+            t = ''
+            for cand in getattr(chunk, 'candidates', []) or []:
+                content = getattr(cand, 'content', None)
+                if not content:
+                    continue
+                for part in getattr(content, 'parts', []) or []:
+                    t += getattr(part, 'text', '') or ''
+        if t:
+            text += t
+            if progress_cb:
+                try:
+                    progress_cb(len(text))
+                except Exception:
+                    pass
 
     finish = ''
     safety = ''
@@ -1287,20 +1296,22 @@ n = len(products_payload)
 
 # ─── BATCHING ────────────────────────────────────────────────────────────────
 BATCH_SIZE = 15
+MAX_PARALLEL = 3
 batches = [products_payload[i:i + BATCH_SIZE] for i in range(0, n, BATCH_SIZE)] or [[]]
 total_batches = len(batches)
 
 brand_bar.progress(10)
-brand_lbl.markdown(f"**الخطوة 1/3:** {n} منتج → {total_batches} دفعة (حجم الدفعة {BATCH_SIZE})")
+brand_lbl.markdown(
+    f"**الخطوة 1/3:** {n} منتج → {total_batches} دفعة "
+    f"(حجم {BATCH_SIZE} · {MAX_PARALLEL} متوازية)"
+)
 
-# Auto-save key for resuming
 SAVE_DIR = ".mahwous_autosave"
 os.makedirs(SAVE_DIR, exist_ok=True)
 safe_brand_key = re.sub(r'[^\w]', '_', current_brand)
 autosave_path = os.path.join(SAVE_DIR, f"{safe_brand_key}.json")
 
 accumulated = {}
-# Resume from autosave if present
 if os.path.exists(autosave_path):
     try:
         with open(autosave_path, 'r', encoding='utf-8') as f:
@@ -1308,40 +1319,141 @@ if os.path.exists(autosave_path):
     except Exception:
         accumulated = {}
 
-start_batch = accumulated.get('_completed_batches', 0)
+completed_set = set(accumulated.get('_completed_batch_ids', []))
+
+# ─── PARALLEL EXECUTION WITH LIVE STATUS ─────────────────────────────────────
+status_lock = threading.Lock()
+batch_status = {
+    i: {
+        'state': 'done' if i in completed_set else 'pending',
+        'chars': 0,
+        'started_at': None,
+        'finished_at': None,
+        'error': '',
+        'mode': 'grounding',
+    }
+    for i in range(total_batches)
+}
+
+def _run_one(b_idx):
+    with status_lock:
+        batch_status[b_idx]['state'] = 'running'
+        batch_status[b_idx]['started_at'] = time.time()
+        batch_status[b_idx]['mode'] = 'grounding'
+
+    def cb(n_chars):
+        with status_lock:
+            batch_status[b_idx]['chars'] = n_chars
+
+    common = dict(
+        brand_name=current_brand,
+        products=batches[b_idx],
+        full_brand_products=products_payload,
+        api_key=st.session_state.api_key,
+        writing_dna=writing_dna,
+        model_name=st.session_state.model_name,
+        batch_index=b_idx,
+        total_batches=total_batches,
+        progress_cb=cb,
+    )
+    try:
+        return call_gemini_brand(**common, use_grounding=True)
+    except Exception as e1:
+        msg = str(e1).lower()
+        if any(x in msg for x in ['grounding', 'search', 'tool', 'billing', 'json', 'empty', 'فارغ']):
+            with status_lock:
+                batch_status[b_idx]['mode'] = 'no-grounding'
+                batch_status[b_idx]['chars'] = 0
+            return call_gemini_brand(**common, use_grounding=False)
+        raise
+
+status_panel = st.empty()
+
+def _render_status():
+    with status_lock:
+        snap = {i: dict(s) for i, s in batch_status.items()}
+    rows = []
+    now = time.time()
+    for i, s in snap.items():
+        if s['state'] == 'pending':
+            icon, info = '⏸️', 'في الانتظار'
+        elif s['state'] == 'running':
+            el = int(now - s['started_at']) if s['started_at'] else 0
+            mode_lbl = '🌐 بحث' if s['mode'] == 'grounding' else '⚡ بدون بحث'
+            info = f"{mode_lbl} · {el}ث · {s['chars']:,} حرف مستلم"
+            icon = '🔄'
+        elif s['state'] == 'done':
+            dur = int((s['finished_at'] or now) - (s['started_at'] or now))
+            icon, info = '✅', f'مكتمل في {dur}ث'
+        else:
+            icon, info = '❌', (s.get('error', '') or '')[:120]
+        rows.append({
+            'الدفعة': f"{i + 1}/{total_batches}",
+            'الحالة': icon,
+            'التفاصيل': info,
+        })
+    with status_panel.container():
+        st.dataframe(
+            pd.DataFrame(rows),
+            use_container_width=True,
+            hide_index=True,
+        )
 
 try:
-    for b_idx in range(start_batch, total_batches):
-        batch = batches[b_idx]
-        brand_lbl.markdown(f"**الدفعة {b_idx + 1}/{total_batches}:** إرسال إلى Gemini AI...")
-        prod_bar.progress((b_idx) / total_batches)
-        prod_lbl.markdown(f"📦 الدفعة {b_idx + 1}/{total_batches} — {len(batch)} منتج")
-        status_msg.info(
-            f"🔍 الدفعة {b_idx + 1}/{total_batches} — {current_brand}\n"
-            f"🔎 فحص التساتر الناقصة + المنتجات عند المنافسين\n"
-            f"⚠️ لا يتم تحديث أوصاف المنتجات الموجودة"
-        )
+    pending_ids = [i for i in range(total_batches) if i not in completed_set]
+    results_by_idx = {}
 
-        batch_result = call_gemini_brand(
-            brand_name=current_brand,
-            products=batch,
-            full_brand_products=products_payload,
-            api_key=st.session_state.api_key,
-            writing_dna=writing_dna,
-            model_name=st.session_state.model_name,
-            use_grounding=True,
-            batch_index=b_idx,
-            total_batches=total_batches,
-        )
-        batch_result = filter_duplicates(batch_result, products_payload)
-        accumulated = merge_batch_results(accumulated, batch_result)
-        accumulated['_completed_batches'] = b_idx + 1
+    if pending_ids:
+        with ThreadPoolExecutor(max_workers=MAX_PARALLEL) as ex:
+            future_to_idx = {ex.submit(_run_one, i): i for i in pending_ids}
 
-        # Auto-save after each batch
-        with open(autosave_path, 'w', encoding='utf-8') as f:
-            json.dump(accumulated, f, ensure_ascii=False, indent=2)
+            while True:
+                done_ids = []
+                for fut, idx in list(future_to_idx.items()):
+                    if fut.done() and idx not in results_by_idx:
+                        try:
+                            res = fut.result()
+                            results_by_idx[idx] = res
+                            with status_lock:
+                                batch_status[idx]['state'] = 'done'
+                                batch_status[idx]['finished_at'] = time.time()
+                        except Exception as e:
+                            with status_lock:
+                                batch_status[idx]['state'] = 'error'
+                                batch_status[idx]['error'] = str(e)
+                                batch_status[idx]['finished_at'] = time.time()
+                            results_by_idx[idx] = e
+                        done_ids.append(idx)
 
-        prod_bar.progress((b_idx + 1) / total_batches)
+                _render_status()
+                done_count = sum(
+                    1 for i in range(total_batches)
+                    if i in completed_set or i in results_by_idx
+                )
+                brand_bar.progress(min(10 + int(done_count / total_batches * 65), 75))
+                prod_bar.progress(done_count / max(total_batches, 1))
+                prod_lbl.markdown(f"📦 {done_count}/{total_batches} دفعة مكتملة")
+
+                if len(results_by_idx) == len(future_to_idx):
+                    break
+                time.sleep(0.7)
+
+    # Collect — surface first error if any
+    first_err = None
+    for idx, res in results_by_idx.items():
+        if isinstance(res, Exception):
+            first_err = res
+            continue
+        merged = filter_duplicates(res, products_payload)
+        accumulated = merge_batch_results(accumulated, merged)
+        completed_set.add(idx)
+
+    accumulated['_completed_batch_ids'] = sorted(completed_set)
+    with open(autosave_path, 'w', encoding='utf-8') as f:
+        json.dump(accumulated, f, ensure_ascii=False, indent=2)
+
+    if first_err is not None and len(completed_set) < total_batches:
+        raise first_err
 
     result = {k: v for k, v in accumulated.items() if not k.startswith('_')}
 
@@ -1371,41 +1483,7 @@ except Exception as e:
     err = str(e)
     brand_bar.progress(0)
 
-    # Try without grounding if it's a grounding error
-    if any(x in err.lower() for x in ['grounding', 'search', 'tool', 'billing']):
-        status_msg.warning("⚠️ Google Search غير متاح — جاري إعادة المحاولة بدون بحث مباشر...")
-        prod_lbl.markdown("🔄 جاري الإعادة...")
-        prod_bar.progress(0.1)
-        try:
-            fallback_acc = {}
-            for b_idx, batch in enumerate(batches):
-                br = call_gemini_brand(
-                    brand_name=current_brand,
-                    products=batch,
-                    full_brand_products=products_payload,
-                    api_key=st.session_state.api_key,
-                    writing_dna=writing_dna,
-                    model_name=st.session_state.model_name,
-                    use_grounding=False,
-                    batch_index=b_idx,
-                    total_batches=len(batches),
-                )
-                br = filter_duplicates(br, products_payload)
-                fallback_acc = merge_batch_results(fallback_acc, br)
-            result = {k: v for k, v in fallback_acc.items() if not k.startswith('_')}
-            brand_bar.progress(100)
-            prod_bar.progress(1.0)
-            status_msg.success("✅ اكتملت المعالجة (بدون Google Search)")
-            st.session_state.current_result = result
-            st.session_state.waiting_confirm = True
-            st.session_state.processing = False
-            time.sleep(0.5)
-            st.rerun()
-        except Exception as e2:
-            status_msg.error(f"❌ فشل أيضاً بدون grounding: {e2}")
-            st.session_state.processing = False
-
-    elif 'api_key' in err.lower() or 'api key' in err.lower() or 'invalid' in err.lower():
+    if 'api_key' in err.lower() or 'api key' in err.lower() or 'invalid' in err.lower():
         status_msg.error("❌ Gemini API Key غير صحيح — تحقق من المفتاح في الشريط الجانبي")
         st.session_state.processing = False
 
