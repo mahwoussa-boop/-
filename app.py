@@ -380,7 +380,10 @@ def extract_json(text: str) -> dict:
     start = text.find('{')
     end = text.rfind('}')
     if start == -1 or end == -1:
-        raise json.JSONDecodeError("No JSON object found", text, 0)
+        snippet = (text[:300] + '...') if len(text) > 300 else text
+        raise ValueError(
+            f"لم يُرجع Gemini JSON صالحاً. مقتطف من الرد ({len(text)} حرف): {snippet!r}"
+        )
     body = text[start:end + 1]
     try:
         return json.loads(body, strict=False)
@@ -548,7 +551,7 @@ def call_gemini_brand(
 
     gen_config_kwargs = dict(
         temperature=0.0,
-        max_output_tokens=32768,
+        max_output_tokens=65536,
     )
     # Force valid JSON output when not using grounding (incompatible with tools)
     if not use_grounding:
@@ -575,18 +578,28 @@ def call_gemini_brand(
                 if t:
                     text += t
 
+    finish = ''
+    safety = ''
+    try:
+        finish = str(response.candidates[0].finish_reason)
+        safety = str(getattr(response.candidates[0], 'safety_ratings', ''))[:200]
+    except Exception:
+        pass
+
     if not text.strip():
-        finish = ''
-        try:
-            finish = str(response.candidates[0].finish_reason)
-        except Exception:
-            pass
+        hint = ''
+        if 'MAX_TOKENS' in finish:
+            hint = ' — قلّل BATCH_SIZE أو ارفع max_output_tokens.'
+        elif 'SAFETY' in finish:
+            hint = ' — حُجبت الاستجابة بفلتر أمان.'
         raise ValueError(
-            f"Gemini أعاد رداً فارغاً (finish_reason={finish}). "
-            f"غالباً السبب: تجاوز max_output_tokens أو فلتر أمان أو استجابة grounding بلا نص."
+            f"Gemini أعاد رداً فارغاً (finish_reason={finish}){hint} safety={safety}"
         )
 
-    return extract_json(text)
+    try:
+        return extract_json(text)
+    except (ValueError, json.JSONDecodeError) as e:
+        raise ValueError(f"{e} | finish_reason={finish}") from e
 
 
 def _normalize_perfume_name(name: str) -> str:
@@ -1273,7 +1286,7 @@ if name_col:
 n = len(products_payload)
 
 # ─── BATCHING ────────────────────────────────────────────────────────────────
-BATCH_SIZE = 25
+BATCH_SIZE = 15
 batches = [products_payload[i:i + BATCH_SIZE] for i in range(0, n, BATCH_SIZE)] or [[]]
 total_batches = len(batches)
 
