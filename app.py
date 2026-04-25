@@ -626,29 +626,28 @@ def call_gemini_brand(
 
 
 def _normalize_perfume_name(name: str) -> str:
-    """Normalize perfume name for duplicate detection across Arabic/English variants."""
+    """Aggressively crush 'trick words' the LLM uses to bypass dedupe filters."""
     if not name:
         return ''
     s = str(name).lower().strip()
-    # Remove diacritics and punctuation
     s = re.sub(r'[ً-ٰٟ]', '', s)
     s = re.sub(r'[^\w؀-ۿ\s]', ' ', s)
-    # Normalize EDP/EDT variants
+    junk_words = [
+        'للرجال', 'للنساء', 'رجالي', 'نسائي',
+        'عطر', 'تستر', 'tester', 'مل', 'ml', 'بخاخ', 'spray',
+        'للجنسين', 'unisex', 'قديم', 'جديد'
+    ]
+    for w in junk_words:
+        s = re.sub(fr'{w}', '', s)
+    s = re.sub(r'\d+', '', s)
     replacements = {
-        'eau de parfum': 'edp', 'أو دو بارفان': 'edp', 'بارفان': 'edp',
-        'بارفيوم': 'edp', 'parfum': 'edp',
-        'eau de toilette': 'edt', 'أو دو تواليت': 'edt', 'تواليت': 'edt',
-        'pour homme': 'men', 'للرجال': 'men', 'رجالي': 'men',
-        'pour femme': 'women', 'للنساء': 'women', 'نسائي': 'women',
-        'tester': 'tstr', 'تستر': 'tstr',
+        'eau de parfum': 'edp', 'بارفيوم': 'edp', 'parfum': 'edp',
+        'eau de toilette': 'edt', 'تواليت': 'edt', 'إنتنس': 'intense',
     }
     for k, v in replacements.items():
         s = s.replace(k, v)
-    # Strip Arabic 'ال'
-    s = re.sub(r'\bال', '', s)
-    # Collapse whitespace
-    s = re.sub(r'\s+', ' ', s).strip()
-    return s
+    s = re.sub(r'ال', '', s)
+    return re.sub(r'\s+', '', s).strip()
 
 
 def filter_duplicates(result: dict, existing_products: list) -> dict:
@@ -737,41 +736,44 @@ def filter_duplicates(result: dict, existing_products: list) -> dict:
 
 
 def merge_batch_results(accum: dict, new: dict) -> dict:
-    """Merge a new batch result into the accumulator for the brand."""
+    """Merge a batch into the brand accumulator, blocking duplicates by id and normalized name."""
     if not accum:
+        # Ensure the canonical keys exist with list defaults
         return {
             'brand': new.get('brand', ''),
             'products_updated': [],
-            'testers_to_add': list(new.get('testers_to_add', [])),
-            'orphan_testers': list(new.get('orphan_testers', [])),
-            'missing_products': list(new.get('missing_products', [])),
+            'testers_to_add': list(new.get('testers_to_add', []) or []),
+            'orphan_testers': list(new.get('orphan_testers', []) or []),
+            'missing_products': list(new.get('missing_products', []) or []),
         }
 
-    existing_tester_names = {
-        _normalize_perfume_name(t.get('name', ''))
-        for t in accum.get('testers_to_add', [])
-    }
-    for t in new.get('testers_to_add', []):
-        norm = _normalize_perfume_name(t.get('name', ''))
-        if norm and norm not in existing_tester_names:
-            accum.setdefault('testers_to_add', []).append(t)
-            existing_tester_names.add(norm)
+    accum.setdefault('testers_to_add', [])
+    accum.setdefault('orphan_testers', [])
+    accum.setdefault('missing_products', [])
 
-    existing_orphan_ids = {o.get('tester_product_id') for o in accum.get('orphan_testers', [])}
-    for o in new.get('orphan_testers', []):
-        if o.get('tester_product_id') not in existing_orphan_ids:
-            accum.setdefault('orphan_testers', []).append(o)
-            existing_orphan_ids.add(o.get('tester_product_id'))
+    # 1. testers_to_add — block by base_product_id
+    existing_ids = {str(t.get('base_product_id', '') or '') for t in accum['testers_to_add']}
+    for t in new.get('testers_to_add', []) or []:
+        bid = str(t.get('base_product_id', '') or '')
+        if bid and bid not in existing_ids:
+            accum['testers_to_add'].append(t)
+            existing_ids.add(bid)
 
-    existing_missing_names = {
-        _normalize_perfume_name(m.get('name', ''))
-        for m in accum.get('missing_products', [])
-    }
-    for m in new.get('missing_products', []):
+    # 2. orphan_testers — block by tester_product_id
+    existing_orphan_ids = {o.get('tester_product_id') for o in accum['orphan_testers']}
+    for o in new.get('orphan_testers', []) or []:
+        oid = o.get('tester_product_id')
+        if oid not in existing_orphan_ids:
+            accum['orphan_testers'].append(o)
+            existing_orphan_ids.add(oid)
+
+    # 3. missing_products — block by normalized name
+    existing_norms = {_normalize_perfume_name(m.get('name', '')) for m in accum['missing_products']}
+    for m in new.get('missing_products', []) or []:
         norm = _normalize_perfume_name(m.get('name', ''))
-        if norm and norm not in existing_missing_names:
-            accum.setdefault('missing_products', []).append(m)
-            existing_missing_names.add(norm)
+        if norm and norm not in existing_norms:
+            accum['missing_products'].append(m)
+            existing_norms.add(norm)
 
     return accum
 
@@ -831,12 +833,12 @@ def build_output_excel(result: dict, original_df: pd.DataFrame, template_bytes: 
     # Load template and write
     wb = load_workbook(io.BytesIO(template_bytes))
 
-    # Drop extra sheets (Categories, Types, Brands) — keep only the products sheet
-    EXTRA_SHEETS = {'categories', 'types', 'brands',
-                    'التصنيفات', 'الأنواع', 'الانواع', 'الماركات', 'الفئات'}
+    # Salla rejects files with extra sheets (Categories/Types/Brands) — nuke anything
+    # that isn't the active products sheet.
+    active_title = wb.active.title
     for sheet_name in list(wb.sheetnames):
-        if sheet_name.strip().lower() in EXTRA_SHEETS and len(wb.sheetnames) > 1:
-            del wb[sheet_name]
+        if sheet_name != active_title:
+            wb.remove(wb[sheet_name])
 
     ws = wb.active
 
