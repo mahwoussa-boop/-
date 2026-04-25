@@ -381,7 +381,18 @@ def extract_json(text: str) -> dict:
     end = text.rfind('}')
     if start == -1 or end == -1:
         raise json.JSONDecodeError("No JSON object found", text, 0)
-    return json.loads(text[start:end + 1])
+    body = text[start:end + 1]
+    try:
+        return json.loads(body, strict=False)
+    except json.JSONDecodeError:
+        # Repair: remove trailing commas before } or ]
+        repaired = re.sub(r',(\s*[}\]])', r'\1', body)
+        try:
+            return json.loads(repaired, strict=False)
+        except json.JSONDecodeError:
+            # Repair: escape lone backslashes and stray control chars in strings
+            repaired2 = re.sub(r'(?<!\\)\\(?![\\/"bfnrtu])', r'\\\\', repaired)
+            return json.loads(repaired2, strict=False)
 
 
 def call_gemini_brand(
