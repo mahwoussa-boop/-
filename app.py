@@ -205,33 +205,45 @@ FALLBACK_POSITIONS = {
 }
 
 
-def find_col(df: pd.DataFrame, key: str) -> str | None:
-    """Find column by Arabic name keywords or positional fallback.
+def _norm_ar(s: str) -> str:
+    """Normalize Arabic for column matching: alef variants, ya, ta marbuta, diacritics."""
+    s = str(s).strip().lower()
+    s = re.sub(r'[ً-ٰٟ]', '', s)  # diacritics
+    s = s.replace('أ', 'ا').replace('إ', 'ا').replace('آ', 'ا').replace('ٱ', 'ا')
+    s = s.replace('ى', 'ي').replace('ئ', 'ي')
+    s = s.replace('ة', 'ه')
+    s = re.sub(r'\s+', ' ', s)
+    return s
 
-    Avoid 'اسم' matching 'اسم خيار 1' when looking for product name.
-    Prefer the most specific keyword first, and exclude option-related columns
-    when searching for 'name' or 'price'.
+
+def find_col(df: pd.DataFrame, key: str) -> str | None:
+    """Find column by Arabic keywords with alef-normalization.
+
+    For 'name'/'price', exclude option columns (containing 'خيار'/'option'/brackets like [1]).
+    For 'images', exclude description-of-image columns ('وصف صورة').
     """
     keywords = ARABIC_COL_KEYS.get(key, [])
     EXCLUDE = {
-        'name': ['خيار', 'option'],
-        'price': ['خيار', 'option'],
+        'name':   ['خيار', 'option', '[1]', '[2]', '[3]'],
+        'price':  ['خيار', 'option', 'تكلفه', 'مخفض'],
+        'images': ['وصف صوره', 'وصف صورة'],
     }
-    excludes = EXCLUDE.get(key, [])
+    excludes = [_norm_ar(x) for x in EXCLUDE.get(key, [])]
 
-    # Pass 1: exact match (case-insensitive, trimmed)
-    for kw in keywords:
-        for col in df.columns:
-            col_str = str(col).strip().lower()
-            if col_str == kw.strip().lower():
-                if not any(x in col_str for x in excludes):
-                    return col
+    cols_norm = [(col, _norm_ar(col)) for col in df.columns]
 
-    # Pass 2: substring match, excluding option columns
+    # Pass 1: exact normalized match
     for kw in keywords:
-        for col in df.columns:
-            col_str = str(col).lower()
-            if kw.lower() in col_str and not any(x in col_str for x in excludes):
+        kn = _norm_ar(kw)
+        for col, cn in cols_norm:
+            if cn == kn and not any(x in cn for x in excludes):
+                return col
+
+    # Pass 2: substring normalized match, excluding bad ones
+    for kw in keywords:
+        kn = _norm_ar(kw)
+        for col, cn in cols_norm:
+            if kn in cn and not any(x in cn for x in excludes):
                 return col
 
     # Positional fallback
@@ -258,9 +270,14 @@ def get_brand_col(df: pd.DataFrame) -> str | None:
 
 
 def is_tester(name: str) -> bool:
-    if not isinstance(name, str):
+    if not isinstance(name, str) or not name.strip():
         return False
-    return any(t in name.lower() for t in ['تستر', 'tester', 'testr'])
+    n = name.lower()
+    if any(t in n for t in ['tester', 'testr']):
+        return True
+    # Arabic forms with possible alef hamza variants
+    n_norm = re.sub(r'[أإآ]', 'ا', n)
+    return any(t in n_norm for t in ['تستر', 'تستير', 'تيستر'])
 
 
 def calc_tester_price(original_price: float) -> float:
