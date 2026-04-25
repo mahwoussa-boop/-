@@ -626,35 +626,40 @@ def call_gemini_brand(
 
 
 def _normalize_perfume_name(name: str) -> str:
+    """Split-based normalization — immune to attached digits and  boundary failures."""
     if not name:
         return ''
     s = str(name).lower().strip()
     s = re.sub(r'[ً-ٰٟ]', '', s)
     s = re.sub(r'[^\w؀-ۿ\s]', ' ', s)
 
-    # MUST happen FIRST: Remove 'ال' prefix so words like 'النسائي' become 'نسائي'
-    s = re.sub(r'ال', '', s)
+    # Force whitespace around digit runs so '100مل' splits into '100' 'مل'
+    s = re.sub(r'(\d+)', r'  ', s)
 
-    junk_words = [
-        'للرجال', 'للنساء', 'رجالي', 'نسائي', 'عطر', 'تستر', 'tester',
-        'مل', 'ml', 'بخاخ', 'spray', 'للجنسين', 'unisex', 'قديم', 'جديد'
-    ]
-    for w in junk_words:
-        s = re.sub(fr'{w}', '', s)
-
-    # Remove all digits (sizes like 100, 80, 50)
-    s = re.sub(r'\d+', '', s)
-
-    # Full dictionary (restored missing variations)
     replacements = {
         'eau de parfum': 'edp', 'أو دو بارفان': 'edp', 'بارفان': 'edp', 'بارفيوم': 'edp', 'parfum': 'edp',
-        'eau de toilette': 'edt', 'أو دو تواليت': 'edt', 'تواليت': 'edt', 'إنتنس': 'intense', 'انتنس': 'intense'
+        'eau de toilette': 'edt', 'أو دو تواليت': 'edt', 'تواليت': 'edt',
+        'إنتنس': 'intense', 'انتنس': 'intense',
     }
     for k, v in replacements.items():
         s = s.replace(k, v)
 
-    # Remove all whitespace to force strict match
-    return re.sub(r'\s+', '', s).strip()
+    junk = {
+        'للرجال', 'للنساء', 'رجالي', 'نسائي', 'عطر', 'تستر', 'tester',
+        'مل', 'ml', 'بخاخ', 'spray', 'للجنسين', 'unisex', 'قديم', 'جديد',
+        'النسائي', 'الرجالي'
+    }
+
+    clean_words = []
+    for w in s.split():
+        cw = w[2:] if w.startswith('ال') and len(w) > 3 else w
+        if w in junk or cw in junk:
+            continue
+        if w.isdigit():
+            continue
+        clean_words.append(cw)
+
+    return ''.join(clean_words)
 
 
 def filter_duplicates(result: dict, existing_products: list) -> dict:
@@ -779,76 +784,111 @@ def merge_batch_results(accum: dict, new: dict) -> dict:
 
 
 def build_output_excel(result: dict, original_df: pd.DataFrame, template_bytes: bytes) -> bytes:
-    """Build Salla-compatible Excel — only NEW suggested products (testers + missing)."""
+    """Build Salla-compatible Excel — NaN-safe, mandatory-field-safe, single-sheet."""
     brand_col = get_brand_col(original_df)
     name_col  = find_col(original_df, 'name')
     price_col = find_col(original_df, 'price')
     desc_col  = find_col(original_df, 'description')
     cat_col   = find_col(original_df, 'category')
-    qty_col   = find_col(original_df, 'quantity')
     img_col   = find_col(original_df, 'images')
 
     brand_name = result.get('brand', '')
     all_cols = list(original_df.columns)
+
+    def get_safe_row(base_id):
+        if not base_id or 'No.' not in original_df.columns:
+            return None
+        match = original_df[original_df['No.'].astype(str) == str(base_id)]
+        return match.iloc[0] if not match.empty else None
+
+    def fill_mandatory(nr):
+        for c in all_cols:
+            cs = str(c).strip()
+            if 'نوع المنتج' in cs:
+                nr[c] = 'منتج جاهز'
+            elif cs == 'النوع':
+                nr[c] = 'منتج'
+            elif 'يتطلب شحن' in cs:
+                nr[c] = 'نعم'
+            elif 'أقصى كمية' in cs:
+                nr[c] = 10  # Salla requires >= 1
+            elif 'الكمية' in cs:
+                nr[c] = 10
+            elif cs == 'الوزن':
+                nr[c] = 0.5  # Salla requires non-empty weight
+            elif 'وحدة الوزن' in cs:
+                nr[c] = 'كجم'
+            elif 'الماركة' in cs and brand_col and c == brand_col:
+                nr[c] = brand_name
+        return nr
+
+    def safe(v, default=''):
+        if v is None:
+            return default
+        try:
+            if pd.isna(v):
+                return default
+        except (TypeError, ValueError):
+            pass
+        sv = str(v).strip()
+        if sv.lower() == 'nan' or sv == '':
+            return default
+        return sv
+
     rows = []
 
-    def fill_mandatory_salla_fields(nr_dict):
-        for c in all_cols:
-            c_str = str(c).strip()
-            if c_str == 'نوع المنتج':
-                nr_dict[c] = 'منتج جاهز'
-            elif c_str == 'النوع' or c_str == 'النوع ':
-                nr_dict[c] = 'منتج'
-            elif c_str == 'هل يتطلب شحن؟' or c_str == 'يتطلب شحن':
-                nr_dict[c] = 'نعم'
-            elif c_str == 'الكمية المتوفرة' or c_str == 'الكمية':
-                nr_dict[c] = 10
-        return nr_dict
-
-    for tester in result.get('testers_to_add', []):
+    for t in result.get('testers_to_add', []):
         nr = {c: '' for c in all_cols}
-        nr = fill_mandatory_salla_fields(nr)
+        base_r = get_safe_row(t.get('base_product_id'))
 
-        if name_col:  nr[name_col] = tester.get('name', '')
-        if price_col: nr[price_col] = tester.get('new_price', 0)
-        if desc_col:  nr[desc_col] = tester.get('new_description', '')
+        if name_col:  nr[name_col] = t.get('name', '')
+        if price_col: nr[price_col] = t.get('new_price', 0)
+        if desc_col:  nr[desc_col] = t.get('new_description', '')
         if brand_col: nr[brand_col] = brand_name
 
+        # Category: copy from base product, else fall back to 'العطور'
         cat_val = ''
-        if tester.get('base_product_id') and cat_col and 'No.' in original_df.columns:
-            base_match = original_df[original_df['No.'].astype(str) == str(tester['base_product_id'])]
-            if not base_match.empty:
-                cat_val = str(base_match.iloc[0].get(cat_col, '') or '')
-        if cat_col: nr[cat_col] = cat_val
+        if base_r is not None and cat_col:
+            cat_val = safe(base_r.get(cat_col, ''), '')
+        if cat_col:
+            nr[cat_col] = cat_val if cat_val else 'العطور'
 
         if img_col:
-            img = tester.get('image_url', '')
-            if not img and tester.get('base_product_id') and 'No.' in original_df.columns:
-                base_match = original_df[original_df['No.'].astype(str) == str(tester['base_product_id'])]
-                if not base_match.empty:
-                    raw_img = str(base_match.iloc[0].get(img_col, '') or '')
-                    img = raw_img.split(',')[0].strip()
+            img = safe(t.get('image_url', ''), '')
+            if not img and base_r is not None:
+                raw_img = safe(base_r.get(img_col, ''), '')
+                img = raw_img.split(',')[0].strip() if raw_img else ''
             nr[img_col] = img
 
+        nr = fill_mandatory(nr)
         rows.append(pd.Series(nr))
 
-    for missing in result.get('missing_products', []):
+    for m in result.get('missing_products', []):
         nr = {c: '' for c in all_cols}
-        nr = fill_mandatory_salla_fields(nr)
 
-        if name_col:  nr[name_col] = missing.get('name', '')
-        if price_col: nr[price_col] = missing.get('price', 0)
-        if desc_col:  nr[desc_col] = missing.get('description', '')
-        if brand_col: nr[brand_col] = missing.get('brand', brand_name)
-        if cat_col:   nr[cat_col] = missing.get('category', '')
+        if name_col:  nr[name_col] = m.get('name', '')
+        if price_col: nr[price_col] = m.get('price', 0)
+        if desc_col:  nr[desc_col] = m.get('description', '')
+        if brand_col: nr[brand_col] = safe(m.get('brand', ''), brand_name)
+
+        # Always provide a category — Salla rejects empty/nan
+        cat_val = safe(m.get('category', ''), '')
+        if cat_col:
+            nr[cat_col] = cat_val if cat_val else 'العطور'
+
         if img_col:
-            img1 = missing.get('image_url_1', '') or ''
-            img2 = missing.get('image_url_2', '') or ''
-            imgs = [str(img1).strip(), str(img2).strip()]
+            img1 = safe(m.get('image_url_1', ''), '')
+            img2 = safe(m.get('image_url_2', ''), '')
+            imgs = [img1, img2]
             nr[img_col] = ','.join(u for u in imgs if u)
+
+        nr = fill_mandatory(nr)
         rows.append(pd.Series(nr))
 
     output_df = pd.DataFrame(rows) if rows else pd.DataFrame(columns=all_cols)
+    # Final NaN sweep — no 'nan' string can leak into Salla
+    output_df = output_df.fillna('')
+    output_df = output_df.replace({'nan': '', 'NaN': '', 'None': ''})
 
     wb = load_workbook(io.BytesIO(template_bytes))
 
@@ -871,23 +911,87 @@ def build_output_excel(result: dict, original_df: pd.DataFrame, template_bytes: 
         for c in range(1, ws.max_column + 1)
     ]
 
-    # Strict literal match — prevents image URL leaking into 'وصف صورة المنتج'
+    # Salla canonical header → semantic key. Used as fallback when df column
+    # names differ from template (e.g. df has 'فئة المنتج' but template wants 'تصنيف المنتج').
+    semantic_for_template = {
+        'تصنيف المنتج': 'category', 'فئة المنتج': 'category', 'فئة': 'category',
+        'اسم المنتج': 'name',
+        'سعر المنتج': 'price', 'السعر': 'price',
+        'الوصف': 'description',
+        'صورة المنتج': 'images',
+        'الماركة': 'brand',
+        'نوع المنتج': 'type_product',
+        'النوع': 'type_simple',
+        'الكمية': 'qty', 'الكمية المتوفرة': 'qty',
+        'أقصى كمية لكل عميل': 'max_qty',
+        'الوزن': 'weight',
+        'وحدة الوزن': 'weight_unit',
+        'هل يتطلب شحن؟': 'shipping', 'يتطلب شحن': 'shipping',
+    }
+    semantic_to_dfcol = {
+        'category': cat_col, 'name': name_col, 'price': price_col,
+        'description': desc_col, 'images': img_col, 'brand': brand_col,
+    }
+
+    # Strict literal header match — image URLs cannot leak into 'وصف صورة المنتج'
     col_map = {}
     for t_idx, t_hdr in enumerate(template_headers):
         if not t_hdr:
             continue
         t_str = str(t_hdr).strip()
+        matched = None
         for df_col in output_df.columns:
             if t_str == str(df_col).strip():
-                col_map[t_idx + 1] = df_col
+                matched = df_col
                 break
+        # Fallback: semantic mapping (e.g. template 'تصنيف المنتج' ↔ df 'فئة المنتج')
+        if matched is None:
+            sem = semantic_for_template.get(t_str)
+            if sem and sem in semantic_to_dfcol and semantic_to_dfcol[sem] in output_df.columns:
+                matched = semantic_to_dfcol[sem]
+        if matched is not None:
+            col_map[t_idx + 1] = matched
+
+    # Mandatory Salla headers that may not exist in original_df — write directly to template columns
+    direct_template_values = {}
+    for t_idx, t_hdr in enumerate(template_headers):
+        if not t_hdr:
+            continue
+        cs = str(t_hdr).strip()
+        if t_idx + 1 in col_map:
+            continue  # already mapped from df
+        if 'نوع المنتج' in cs:
+            direct_template_values[t_idx + 1] = 'منتج جاهز'
+        elif cs == 'النوع':
+            direct_template_values[t_idx + 1] = 'منتج'
+        elif 'يتطلب شحن' in cs:
+            direct_template_values[t_idx + 1] = 'نعم'
+        elif 'أقصى كمية' in cs:
+            direct_template_values[t_idx + 1] = 10
+        elif 'الكمية' in cs:
+            direct_template_values[t_idx + 1] = 10
+        elif cs == 'الوزن':
+            direct_template_values[t_idx + 1] = 0.5
+        elif 'وحدة الوزن' in cs:
+            direct_template_values[t_idx + 1] = 'كجم'
+        elif cs == 'تصنيف المنتج':
+            direct_template_values[t_idx + 1] = 'العطور'
+        elif 'الماركة' in cs:
+            direct_template_values[t_idx + 1] = brand_name
 
     for r_idx, (_, row) in enumerate(output_df.iterrows()):
         excel_row = data_start + r_idx
         for t_col, df_col in col_map.items():
             val = row.get(df_col, '')
-            if pd.isna(val) if not isinstance(val, str) else False:
+            try:
+                if pd.isna(val):
+                    val = ''
+            except (TypeError, ValueError):
+                pass
+            if isinstance(val, str) and val.lower() == 'nan':
                 val = ''
+            ws.cell(row=excel_row, column=t_col, value=val)
+        for t_col, val in direct_template_values.items():
             ws.cell(row=excel_row, column=t_col, value=val)
 
     buf = io.BytesIO()
