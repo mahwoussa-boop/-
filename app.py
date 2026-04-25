@@ -57,6 +57,10 @@ COMPETITOR_STORES = [
     "https://www.sephora.me/sa-ar", "https://www.faces.sa/ar", "https://niche.sa/",
     "https://worldgivenchy.com/", "https://sarahmakeup37.com/", "https://aromaticcloud.com/",
     "https://tatayab.com/", "https://kayan9.com/",
+    "https://www.noon.com/saudi-ar/", "https://www.amazon.sa/",
+    "https://en.ounass.com/saudi-arabia/", "https://www.namshi.com/sa-ar/",
+    "https://www.brandsforless.com/en-sa/", "https://www.sivvi.com/en-sa/",
+    "https://haraj.com.sa/", "https://shukran.com/",
 ]
 
 # ─── HTML TEMPLATES (mandatory output structures) ────────────────────────────
@@ -152,10 +156,14 @@ SYSTEM_INSTRUCTION_TEMPLATE = """## هويتك ومهمتك
 - إذا وُجد التستر → **تخطّ، لا تقترح شيئاً**
 - إذا لم يُوجد → انتقل للقاعدة 2
 
-**القاعدة 2 — البحث عند المنافسين:**
-- ابحث في المتاجر السعودية المحددة: هل يبيعون تستر لهذا العطر؟
-- إذا وجدت → سجّل: اسم المتجر، حجم التستر بالمل، السعر المرجعي
-- إذا لم تجد → لا تقترح التستر
+**القاعدة 2 — البحث الشامل في السوق السعودي:**
+- ابحث في Google بهذه الصيغ المتعددة:
+  1. "[اسم العطر] tester Saudi Arabia buy"
+  2. "[اسم العطر] تستر المملكة العربية السعودية"
+  3. "[اسم الماركة] tester site:sa"
+- ابحث في **أي** متجر سعودي يظهر في نتائج Google، سواء كان في قائمة المتاجر المرجعية أم لا
+- سجّل اسم المتجر كما يظهر في URL النتيجة (مثال: "noon.com" أو "goldenscent.com")
+- إذا لم تجد في أي مكان → لا تقترح التستر
 
 **القاعدة 3 — صورة التستر:**
 - الصورة تُؤخذ حرفياً من حقل image_url للمنتج الأساسي الموجود في قائمتنا
@@ -193,8 +201,10 @@ SYSTEM_INSTRUCTION_TEMPLATE = """## هويتك ومهمتك
 - لا تكرر نفس base_product_id في testers_to_add. كل base_product_id يظهر مرة واحدة فقط مهما تعددت المتاجر التي تبيع التستر.
 - لا تكرر نفس المنتج في missing_products بصيغ مختلفة (مثل "Fame Parfum 80ml" و "فيم بارفان 80 مل") — كلها نفس المنتج، اذكره مرة واحدة فقط.
 
-## 🏷️ صرامة أسماء المتاجر
-- يجب أن يكون حقل source_store منسوخاً **حرفياً** من قائمة المتاجر competitors_json المتوفرة لك أدناه. لا تخترع أسماء نطاقات (مثل niceonesa.com) أو صيغ أخرى (مثل "Nice One"). انسخ القيمة كما هي تماماً من القائمة.
+## 🏷️ قواعد source_store
+- يُفضَّل أن يكون من قائمة المتاجر المرجعية competitors_json
+- لكن إذا وجدت المنتج في متجر سعودي آخر موثوق، سجّله بنطاقه الفعلي (مثال: "noon.com")
+- ممنوع اختراع متجر غير موجود — يجب أن يكون رابط المنتج قابلاً للتحقق
 
 ## 📐 صرامة مخطط JSON
 - يجب أن تحتوي **جميع** عناصر missing_products على الحقلين image_url_1 و image_url_2 بشكل دائم. إذا لم تجد صورة ثانية، اجعل قيمتها سلسلة نصية فارغة "" — ولا تحذف المفتاح أبداً.
@@ -500,9 +510,19 @@ def call_gemini_brand(
 
 ## المهمة 3: المنتجات الناقصة عند المنافسين
 قارن قائمتنا الكاملة ({len(full_brand_products)} منتج) بما يبيعه المنافسون السعوديون لماركة "{brand_name}".
+- 🔴 الأولوية القصوى: إصدارات 2024 و2025 و2026 — ابحث بالاسم الصريح مثل "Million Gold" و"Phantom Intense" و"Phantom Elixir" وما صدر حديثاً
 - ركّز على: الأكثر مبيعاً، الأحجام الشائعة (50مل، 100مل، 200مل)، الإصدارات الجديدة
+- لا تكتفِ بعطور 2022 و2023 — ابحث صراحةً عن "{brand_name} new release 2024 2025 2026" في المتاجر السعودية
 - اقترح فقط المنتجات المتوفرة للشراء الآن مع ذكر المتجر المصدر
 - لكل منتج مقترح: اكتب وصفاً كاملاً بقالب العطور الجديدة
+
+## استراتيجية البحث الإلزامية
+لكل منتج تبحث عنه، نفّذ بالترتيب:
+1. ابحث بـ: "{brand_name} [اسم العطر] [حجم المل] Saudi"
+2. ابحث بـ: "[اسم العطر] عطر [الماركة] سعودي"
+3. ابحث في: noon.com و goldenscent.com و niceonesa.com على الأقل
+4. تحقق من الموقع الرسمي للماركة ({brand_name} official site) إذا كانت ماركة عالمية كبرى
+لا تكتفِ بنتيجة واحدة. ابحث على الأقل في 3 متاجر مختلفة لكل منتج.
 
 ## ⚠️ تحذير نهائي قبل الإخراج
 - قبل إرجاع JSON، راجع المصفوفات وتأكد:
@@ -634,7 +654,7 @@ def _normalize_perfume_name(name: str) -> str:
     s = re.sub(r'[^\w؀-ۿ\s]', ' ', s)
 
     # Force whitespace around digit runs so '100مل' splits into '100' 'مل'
-    s = re.sub(r'(\d+)', r'  ', s)
+    s = re.sub(r'(\d+)\s*(ml|مل)', ' ', s, flags=re.IGNORECASE)
 
     replacements = {
         'eau de parfum': 'edp', 'أو دو بارفان': 'edp', 'بارفان': 'edp', 'بارفيوم': 'edp', 'parfum': 'edp',
@@ -655,8 +675,7 @@ def _normalize_perfume_name(name: str) -> str:
         cw = w[2:] if w.startswith('ال') and len(w) > 3 else w
         if w in junk or cw in junk:
             continue
-        if w.isdigit():
-            continue
+        # Keep digit words — they are part of perfume identity (1 Million, 212, 9 PM). Size digits already stripped above.
         clean_words.append(cw)
 
     return ''.join(clean_words)
@@ -694,16 +713,18 @@ def filter_duplicates(result: dict, existing_products: list) -> dict:
                 continue
             base_id = str(t.get('base_product_id', '') or '').strip()
             norm = _normalize_perfume_name(t.get('name', ''))
+            size_key = str(t.get('size_ml', '') or '').strip()
+            composite_key = f"{norm}|{size_key}" if norm else ''
             if base_id and base_id in seen_base_ids:
                 continue
-            if norm and norm in seen_tester_norms:
+            if composite_key and composite_key in seen_tester_norms:
                 continue
             if matches_existing(norm):
                 continue
             if base_id:
                 seen_base_ids.add(base_id)
-            if norm:
-                seen_tester_norms.add(norm)
+            if composite_key:
+                seen_tester_norms.add(composite_key)
             deduped_testers.append(t)
         result['testers_to_add'] = deduped_testers
 
@@ -826,7 +847,7 @@ def build_output_excel(result: dict, original_df: pd.DataFrame, template_bytes: 
             elif 'وحدة الوزن' in cs or 'وحده الوزن' in ns:
                 nr[c] = 'kg'  # Salla expects English unit code
             elif 'إخفاء خيار' in cs or 'اخفاء خيار' in ns:
-                nr[c] = 'لا'
+                nr[c] = 0
             elif 'الماركة' in cs and brand_col and c == brand_col:
                 nr[c] = brand_name
         return nr
@@ -860,7 +881,12 @@ def build_output_excel(result: dict, original_df: pd.DataFrame, template_bytes: 
         if base_r is not None and cat_col:
             cat_val = safe(base_r.get(cat_col, ''), '')
         if cat_col:
-            nr[cat_col] = cat_val if cat_val else 'العطور'
+            if cat_val:
+                nr[cat_col] = cat_val
+            elif not original_df[cat_col].dropna().empty:
+                nr[cat_col] = original_df[cat_col].dropna().mode().iloc[0]
+            else:
+                nr[cat_col] = 'العطور'
 
         if img_col:
             img = safe(t.get('image_url', ''), '')
@@ -883,7 +909,12 @@ def build_output_excel(result: dict, original_df: pd.DataFrame, template_bytes: 
         # Always provide a category — Salla rejects empty/nan
         cat_val = safe(m.get('category', ''), '')
         if cat_col:
-            nr[cat_col] = cat_val if cat_val else 'العطور'
+            if cat_val:
+                nr[cat_col] = cat_val
+            elif not original_df[cat_col].dropna().empty:
+                nr[cat_col] = original_df[cat_col].dropna().mode().iloc[0]
+            else:
+                nr[cat_col] = 'العطور'
 
         if img_col:
             img1 = safe(m.get('image_url_1', ''), '')
@@ -985,9 +1016,7 @@ def build_output_excel(result: dict, original_df: pd.DataFrame, template_bytes: 
         elif 'وحدة الوزن' in cs or 'وحده الوزن' in ns:
             direct_template_values[t_idx + 1] = 'kg'
         elif 'إخفاء خيار' in cs or 'اخفاء خيار' in ns:
-            direct_template_values[t_idx + 1] = 'لا'
-        elif cs == 'تصنيف المنتج':
-            direct_template_values[t_idx + 1] = 'العطور'
+            direct_template_values[t_idx + 1] = 0
         elif 'الماركة' in cs:
             direct_template_values[t_idx + 1] = brand_name
 
@@ -1009,10 +1038,11 @@ def build_output_excel(result: dict, original_df: pd.DataFrame, template_bytes: 
             ws.cell(row=excel_row, column=t_col, value=val)
 
     # Wipe any leftover template demo rows below our data (e.g. the 'زارا/ملابس' sample row)
-    if ws.max_row > last_written:
-        for r in range(last_written + 1, ws.max_row + 1):
-            for c in range(1, ws.max_column + 1):
-                ws.cell(row=r, column=c, value=None)
+    # Force-wipe well past max_row — openpyxl misses formatted-only rows (e.g. Salla's 'زارا/ملابس' demo row)
+    WIPE_UNTIL = max(ws.max_row + 1, last_written + 200)
+    for r in range(last_written + 1, WIPE_UNTIL):
+        for c in range(1, ws.max_column + 1):
+            ws.cell(row=r, column=c, value=None)
 
     buf = io.BytesIO()
     wb.save(buf)
