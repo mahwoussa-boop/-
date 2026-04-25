@@ -45,42 +45,130 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# ─── COMPETITOR STORES (Saudi market — strict scope) ─────────────────────────
+COMPETITOR_STORES = [
+    "https://saeedsalah.com/", "https://vanilla.sa/", "https://sara-makeup.com/",
+    "https://alkhabeershop.com/", "https://www.goldenscent.com/", "https://leesanto.com/",
+    "https://azalperfume.com/", "https://candyniche.com/", "https://luxuryperfumesnish.com/",
+    "https://hanan-store55.com/", "https://areejamwaj.com/", "https://niceonesa.com/",
+    "https://www.sephora.me/sa-ar", "https://www.faces.sa/ar", "https://niche.sa/",
+    "https://worldgivenchy.com/", "https://sarahmakeup37.com/", "https://aromaticcloud.com/",
+    "https://tatayab.com/", "https://kayan9.com/",
+]
+
+# ─── HTML TEMPLATES (mandatory output structures) ────────────────────────────
+HTML_TEMPLATE_NEW = """<p><strong>[مقدمة تسويقية جذابة]</strong></p>
+<h3>التفاصيل والخطوط العطرية باختصار</h3>
+<ul>
+  <li><strong>الماركة:</strong> [اسم الماركة]</li>
+  <li><strong>اسم العطر:</strong> [اسم العطر]</li>
+  <li><strong>الجنس:</strong> [رجالي / نسائي / للجنسين]</li>
+  <li><strong>الخط العطري (العائلة):</strong> [مثل: حمضي - أروماتك]</li>
+  <li><strong>الحجم:</strong> [الحجم مل]</li>
+  <li><strong>التركيز:</strong> [مثل: أودي بارفيوم]</li>
+  <li><strong>سنة الإصدار:</strong> [السنة والتوقيع إن وجد]</li>
+</ul>
+<h3>رحلة العطر (النوتات)</h3>
+<ul>
+  <li><strong>الافتتاحية:</strong> [وصف]</li>
+  <li><strong>القلب العطري:</strong> [وصف]</li>
+  <li><strong>القاعدة الأساسية:</strong> [وصف]</li>
+</ul>
+<h3>لماذا تختار هذا العطر؟</h3>
+<ul>
+  <li><strong>رائحة متوازنة:</strong> [وصف]</li>
+  <li><strong>مثالي لجميع الأوقات:</strong> [وصف]</li>
+  <li><strong>أداء قوي:</strong> [وصف]</li>
+</ul>
+<h3>الأسئلة الشائعة</h3>
+<p><strong>هل هذا العطر مناسب للمناخ الحار؟</strong><br>[إجابة]</p>
+<p><strong>هل يمكن استخدامه يومياً؟</strong><br>[إجابة]</p>
+<p><strong>ما هي المناسبة الأفضل لاستخدامه؟</strong><br>[إجابة]</p>
+<h3>اكتشف المزيد من مهووس</h3>
+<ul>
+  <li><a href="#">استكشف أحدث العطور الرجالية هنا</a></li>
+  <li><a href="#">تصفح أجمل العطور النسائية الجذابة</a></li>
+  <li><a href="#">للباحثين عن التميز، استكشف عطور النيش الفاخرة</a></li>
+</ul>"""
+
+HTML_TEMPLATE_TESTER = """<p><strong>استمتع بالفخامة المطلقة بتكلفة أذكى! نقدم لك تستر "[اسم العطر]" من [الماركة] الأصلي 100%، ليمنحك نفس التجربة، الثبات، والفوحان للإصدار المغلف ولكن بسعر استثنائي. [مقدمة عن العطر].</strong></p>
+<h3>التفاصيل والخطوط باختصار</h3>
+<ul>
+  <li><strong>الماركة:</strong> [اسم الماركة]</li>
+  <li><strong>الاسم:</strong> [اسم العطر]</li>
+  <li><strong>حالة المنتج:</strong> تستر (Tester) أصلي 100%.</li>
+  <li><strong>الجنس:</strong> [رجالي / نسائي / للجنسين]</li>
+  <li><strong>الخط (العائلة):</strong> [مثل: حمضي - أروماتك]</li>
+  <li><strong>الحجم:</strong> [الحجم مل]</li>
+  <li><strong>التركيز:</strong> [مثل: أودي بارفيوم]</li>
+</ul>
+<h3>رحلة النوتات</h3>
+<ul>
+  <li><strong>الافتتاحية:</strong> [وصف]</li>
+  <li><strong>القلب:</strong> [وصف]</li>
+  <li><strong>القاعدة الأساسية:</strong> [وصف]</li>
+</ul>
+<h3>لماذا تختار هذا الإصدار؟</h3>
+<ul>
+  <li><strong>رائحة متوازنة:</strong> [وصف]</li>
+  <li><strong>مثالي لجميع الأوقات:</strong> [وصف]</li>
+  <li><strong>أداء قوي:</strong> [وصف]</li>
+</ul>
+<h3>الدليل الشامل للتساتر من متجر مهووس</h3>
+<p>هل تتساءل عن سر التساتر ولماذا تحظى بشعبية هائلة بين عشاق الروائح الفاخرة؟ يسعدنا في متجر مهووس أن نكشف لك هذا السر، لنجعل تجربة تسوقك أكثر ذكاءً وثقة.</p>
+<p><strong>ما هو التستر؟</strong><br>التستر هو نسخة أصلية 100% تصدرها الشركة المصنعة (الماركات العالمية) جنباً إلى جنب مع المنتجات التجارية. الهدف الأساسي من إنتاجه هو وضعه في المتاجر والبوتيكات الفاخرة ليتمكن العملاء من تجربة الرائحة والأداء قبل الشراء.</p>
+<p><strong>ما الفرق بين التستر والإصدار العادي المغلف؟</strong><br>الفرق الوحيد والأساسي يكمن في "الشكل الخارجي" فقط، ولا مساومة أبداً على الجودة:</p>
+<ul>
+  <li><strong>السائل:</strong> متطابق 100% من حيث المكونات، التركيز، الثبات، والفوحان. أنت تحصل على نفس القطرة الأصلية تماماً.</li>
+  <li><strong>الزجاجة:</strong> يأتي في نفس الزجاجة الأصلية الفاخرة للماركة، وقد يُطبع عليها أحياناً عبارة (Tester) أو (Demonstration).</li>
+  <li><strong>العلبة الخارجية:</strong> بهدف تقليل التكاليف، تُصدر الشركات التساتر في علب كرتونية بسيطة (غالباً بيضاء أو بنية صديقة للبيئة)، وتأتي بدون الغلاف البلاستيكي الشفاف (السلوفان).</li>
+  <li><strong>الغطاء:</strong> تأتي معظم التساتر بغطائها الأصلي الفاخر، وفي حالات نادرة جداً قد تأتي بدون غطاء بناءً على تصميم الشركة المصنعة.</li>
+</ul>
+<p><strong>لماذا يعتبر التستر استثماراً ذكياً؟</strong><br>إذا كنت تشتري لاقتنائك الشخصي وليس لتقديمه كهدية رسمية، فإن التستر هو الخيار الأكثر ذكاءً وتوفيراً. فهو يتيح لك الاستمتاع بأرقى الروائح العالمية وإصدارات النيش بأسعار اقتصادية مخفضة جداً، لتحصل على أقصى قيمة مقابل ما تدفعه.</p>
+<p><strong>ضمان مهووس الذهبي</strong><br>نحن في متجر مهووس نضع ثقتك في المقام الأول. نضمن لك أصالة جميع التساتر المتوفرة لدينا بنسبة 100%. يتم توفيرها من نفس الموزعين المعتمدين للماركات العالمية، لتعيش تجربة الفخامة المطلقة براحة بال تامة.</p>
+<h3>اكتشف المزيد من مهووس</h3>
+<ul>
+  <li><a href="#">تصفح تشكيلتنا الواسعة من التساتر الأصلية</a></li>
+  <li><a href="#">تسوق المزيد من إصدارات النيش الرجالية الفاخرة</a></li>
+  <li><a href="#">اكتشف أحدث إصدارات النيش النسائية</a></li>
+</ul>"""
+
 # ─── SYSTEM INSTRUCTION ──────────────────────────────────────────────────────
-SYSTEM_INSTRUCTION = """أنت خبير عالمي في كتابة أوصاف منتجات العطور محسّنة لمحركات البحث التقليدية (Google SEO) ومحركات بحث الذكاء الصناعي (GEO/AIO). تعمل حصرياً لمتجر "مهووس" (Mahwous) - الوجهة الأولى للعطور الفاخرة في السعودية.
+SYSTEM_INSTRUCTION = f"""## هويتك ومهمتك
+أنت محلل بيانات عطور وخبير توريد لمتجر مهووس. مهمتك هي مراقبة المنافسين في السعودية واكتشاف العطور والتساتر التي تنقصنا وتجهيزها للرفع الفوري على منصة سلة.
 
-## هويتك ومهمتك
-أنت خبير عطور محترف مع 15+ سنة خبرة في صناعة العطور الفاخرة، متخصص في SEO و Generative Engine Optimization (GEO)، وكاتب محتوى عربي بارع بأسلوب راقٍ ودود وعاطفي وتسويقي مقنع. تمثل صوت متجر "مهووس" بكل احترافية وثقة.
+## صرامة مطلقة ضد التهلوس (Zero Tolerance for Hallucination)
+- ممنوع منعاً باتاً اختراع أو تأليف أي عطر أو إصدار أو سعر أو رابط صورة غير موجود فعلياً في الواقع.
+- إذا لم تجد معلومة موثوقة، اترك الحقل فارغاً ولا تخمّن.
+- كل عطر تقترحه يجب أن يكون موجوداً فعلياً في أحد المتاجر السعودية المذكورة أدناه.
 
-مهمتك: كتابة أوصاف منتجات عطور شاملة واحترافية ومحسّنة لتحقيق:
-1. تصدر نتائج البحث في Google
-2. الظهور في إجابات محركات بحث الذكاء الاصطناعي (ChatGPT, Gemini, Perplexity)
-3. زيادة معدل التحويل بنسبة 40-60%
-4. تعزيز ثقة العملاء (E-E-A-T: Experience, Expertise, Authoritativeness, Trustworthiness)
+## نطاق البحث الحصري — المتاجر السعودية فقط
+يجب أن تتم المقارنة والبحث حصرياً في هذه المتاجر السعودية المحلية:
+{json.dumps(COMPETITOR_STORES, ensure_ascii=False, indent=2)}
 
-## قواعد الكلمات المفتاحية (إلزامية)
-**المستوى 1: الكلمة الرئيسية** - الصيغة: "عطر [الماركة] [اسم العطر] [التركيز] [الحجم] [للجنس]" - التكرار: 5-7 مرات في 1200 كلمة
-**المستوى 2: الكلمات الثانوية (3 كلمات)** - التكرار: 3-5 مرات لكل كلمة
-**المستوى 3: الكلمات الدلالية (10-15 كلمة)** - صفات، مكونات، أحاسيس، مناسبات - التكرار: 2-3 مرات لكل كلمة
-**المستوى 4: الكلمات الحوارية (5-8 عبارات)** - في قسم FAQ
+## الدقة في تفاصيل كل عطر
+لكل عطر، حلّل بدقة: اسم العطر، الماركة، التركيز (EDP/EDT/Parfum/Extrait)، الإصدار/السنة، الحجم بالـ مل، النوع (رجالي/نسائي/للجنسين)، العائلة العطرية.
 
-## بنية الوصف الإلزامية (1200-1500 كلمة):
-1. الفقرة الافتتاحية (100-150 كلمة) - الكلمة الرئيسية في أول 50 كلمة
-2. تفاصيل المنتج (نقاط نقطية)
-3. رحلة العطر: الهرم العطري (200-250 كلمة) - وصف حسي للـ Top/Heart/Base Notes
-4. لماذا تختار هذا العطر؟ (200-250 كلمة) - 4-6 نقاط بمزايا وفوائد
-5. متى وأين ترتدي هذا العطر؟ (150-200 كلمة) - الفصول، الأوقات، المناسبات
-6. لمسة خبير من مهووس (200-250 كلمة) - تحليل حسي، ثبات، مقارنات [إلزامي]
-7. الأسئلة الشائعة FAQ (250-300 كلمة) - 6-8 أسئلة بكلمات مفتاحية حوارية
-8. اكتشف أكثر من مهووس - روابط داخلية وخارجية
-9. الفقرة الختامية "عالمك العطري يبدأ من مهووس"
+## سياسة الصور الذكية
+- إذا كان المنتج المقترح "تستر" لعطر **موجود مسبقاً** في قائمتنا: انسخ حقل image_url من المنتج الأساسي بدون البحث عن صورة جديدة.
+- إذا كان المنتج جديداً (عطر أو تستر غير موجود لدينا): ابحث عن صور احترافية بخلفية بيضاء من مصادر موثوقة (الموقع الرسمي للماركة أو متاجر سعودية موثوقة) وأعد:
+  * image_url_1: زجاجة العطر لحالها بخلفية بيضاء.
+  * image_url_2: زجاجة العطر بجوار الكرتون بخلفية بيضاء.
 
-## الأسلوب: راقٍ (40%) + ودود (25%) + عاطفي (20%) + تسويقي (15%)
-لا تستخدم الإيموجي. استخدم Bold للكلمات المهمة. اكتب بطبيعية دون حشو.
+## قوالب الوصف الإلزامية (HTML)
+استخدم القالبين التاليين حرفياً، واملأ المتغيرات بأسلوب تسويقي راقٍ، ولا تغيّر بنية الـ HTML:
 
-## قواعد خاصة للمعالجة الآلية:
-- عند طلب JSON، أعد فقط JSON صارم بدون أي نص إضافي أو markdown code blocks
-- لا تبدأ الرد بـ ``` أو json أو أي نص قبل القوس الأول {
-- أعد JSON واحد فقط يبدأ بـ { وينتهي بـ }
+### قالب العطور الجديدة/الأساسية:
+{HTML_TEMPLATE_NEW}
+
+### قالب التساتر:
+{HTML_TEMPLATE_TESTER}
+
+## قواعد المعالجة الآلية:
+- أعد JSON صارم فقط، يبدأ بـ {{ وينتهي بـ }}، بلا أي نص خارجه ولا markdown code blocks.
+- لا تبدأ الرد بـ ``` أو json.
+- جميع الأسعار بالريال السعودي.
+- قاعدة تسعير التستر: خصم 70 ريال للمنتجات تحت 1000 ريال، خصم 150 ريال لما هو 1000 ريال فأكثر.
 """
 
 # ─── COLUMN DETECTION ────────────────────────────────────────────────────────
@@ -186,121 +274,25 @@ def extract_json(text: str) -> dict:
     return json.loads(text[start:end + 1])
 
 
-# ─── BATCHING CONFIG ─────────────────────────────────────────────────────────
-BATCH_SIZE = 20            # منتجات لكل دفعة
-BATCH_SLEEP_SEC = 4        # استراحة بين الدفعات لتفادي Rate Limit
-MAX_RETRIES = 3            # عدد محاولات الإعادة لكل دفعة
-BACKUP_FILE = "mahwous_backup.json"
-
-
-def _save_backup(brand_results: dict) -> None:
-    """احفظ نسخة احتياطية محلية بعد إكمال كل ماركة."""
-    try:
-        with open(BACKUP_FILE, 'w', encoding='utf-8') as f:
-            json.dump(brand_results, f, ensure_ascii=False, indent=2)
-    except Exception:
-        pass  # لا نوقف المعالجة بسبب فشل الحفظ
-
-
-def _load_backup() -> dict:
-    try:
-        if os.path.exists(BACKUP_FILE):
-            with open(BACKUP_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
-    except Exception:
-        pass
-    return {}
-
-
-def _build_batch_prompt(brand_name: str, products: list, use_grounding: bool,
-                        batch_idx: int, total_batches: int) -> str:
-    products_summary = json.dumps(
-        [{'id': p.get('id', ''), 'name': p.get('name', ''),
-          'price': p.get('price', 0),
-          'desc_snippet': str(p.get('description', ''))[:150]}
-         for p in products],
-        ensure_ascii=False, indent=2
-    )
-    # المهمتان 2 و 3 (التساتر والنواقص) تُطلب فقط في الدفعة الأخيرة
-    # لتجنب التكرار، أما المهمة 1 فتُطلب لكل دفعة.
-    is_last = (batch_idx == total_batches - 1)
-    extra_tasks = ""
-    if is_last:
-        extra_tasks = f"""
-### المهمة 2: التساتر (للماركة كاملة)
-{f'ابحث الآن في الإنترنت عن عطور ماركة "{brand_name}" المتاحة كـ "تستر" في السوق السعودي.' if use_grounding else f'بناءً على معرفتك، أي عطور ماركة "{brand_name}" يتوفر منها تستر في الأسواق؟'}
-- قاعدة التسعير: خصم 70 ريال للمنتجات تحت 1000 ريال، خصم 150 ريال للمنتجات فوق 1000 ريال.
-
-### المهمة 3: النواقص (للماركة كاملة)
-{f'ابحث في الإنترنت عن عطور ماركة "{brand_name}" غير موجودة في قائمتي.' if use_grounding else f'بناءً على معرفتك، ما هي عطور ماركة "{brand_name}" الرئيسية غير الموجودة في قائمتي؟'}
-لكل منتج ناقص، اكتب بياناته الكاملة مع وصف HTML محسّن جاهز للرفع على سلة.
-"""
-
-    return f"""أنت تعالج منتجات ماركة "{brand_name}" في متجر مهووس.
-
-هذه الدفعة رقم {batch_idx + 1} من أصل {total_batches}.
-عدد المنتجات في هذه الدفعة: {len(products)}
-
-قائمة المنتجات (ملخص):
-{products_summary}
-
-**المطلوب:**
-
-### المهمة 1: تحديث الأوصاف والسيو (لمنتجات هذه الدفعة فقط)
-لكل منتج حالي، اكتب وصفاً HTML احترافياً محسّناً للـ SEO كامل (1200-1500 كلمة) وفق هويتك كخبير مهووس. الوصف يجب أن يكون بـ HTML: <h2>, <h3>, <ul>, <li>, <strong>, <p>.
-{extra_tasks}
-**أعد JSON صارم فقط:**
-
-{{
-  "brand": "{brand_name}",
-  "products_updated": [
-    {{
-      "product_id": "string",
-      "name": "اسم المنتج الكامل",
-      "new_description": "<h2>...</h2><p>...</p>",
-      "seo_title": "عنوان SEO أقل من 60 حرف",
-      "seo_description": "وصف ميتا أقل من 155 حرف"
-    }}
-  ],
-  "testers_updated": [
-    {{
-      "product_id": "string أو null",
-      "name": "اسم المنتج كامل مع كلمة تستر",
-      "is_new": true,
-      "tester_available_in_market": true,
-      "original_price": 0,
-      "new_price": 0,
-      "new_description": "<p>HTML وصف...</p>",
-      "notes": "ملاحظة"
-    }}
-  ],
-  "missing_products": [
-    {{
-      "name": "اسم المنتج الكامل",
-      "type": "عطر مفرد",
-      "category": "العطور > عطور رجالية",
-      "price": 0,
-      "description": "<h2>...</h2><p>...</p>",
-      "brand": "{brand_name}",
-      "is_tester": false
-    }}
-  ]
-}}
-
-ملاحظة: في الدفعات غير الأخيرة، أعد testers_updated و missing_products كقوائم فارغة [].
-"""
-
-
-def _call_gemini_single_batch(
+def call_gemini_brand(
     brand_name: str,
     products: list,
+    full_brand_products: list,
     api_key: str,
-    model_name: str,
-    use_grounding: bool,
-    batch_idx: int,
-    total_batches: int,
+    model_name: str = 'gemini-2.0-flash',
+    use_grounding: bool = True,
+    include_missing_search: bool = True,
+    batch_index: int = 0,
+    total_batches: int = 1,
 ) -> dict:
-    """نداء واحد للـ API لدفعة واحدة، مع response_mime_type=application/json."""
+    """Call Gemini API for a single brand batch.
+
+    - `products`: current batch (for description updates).
+    - `full_brand_products`: ALL products of the brand, used for hallucination-prevention
+      and tester base-image lookup. Sent every batch.
+    - `include_missing_search`: only True for the first batch — the brand-wide gap
+      analysis runs once to avoid duplicate suggestions across batches.
+    """
     genai.configure(api_key=api_key)
 
     model_kwargs = dict(
@@ -314,93 +306,145 @@ def _call_gemini_single_batch(
 
     model = genai.GenerativeModel(**model_kwargs)
 
-    prompt = _build_batch_prompt(brand_name, products, use_grounding,
-                                 batch_idx, total_batches)
+    batch_summary = json.dumps(
+        [{'id': p.get('id', ''), 'name': p.get('name', ''),
+          'price': p.get('price', 0),
+          'image_url': p.get('image_url', ''),
+          'desc_snippet': str(p.get('description', ''))[:150]}
+         for p in products],
+        ensure_ascii=False, indent=2
+    )
 
-    # Structured Outputs: إجبار JSON نقي
-    # ملاحظة: response_mime_type لا يتوافق مع google_search_retrieval في بعض الإصدارات،
-    # لذلك نُفعّله فقط حين لا يوجد grounding.
-    gen_config_kwargs = {'temperature': 0.0}
-    if not use_grounding:
-        gen_config_kwargs['response_mime_type'] = 'application/json'
+    full_catalog = json.dumps(
+        [{'id': p.get('id', ''), 'name': p.get('name', ''),
+          'price': p.get('price', 0),
+          'image_url': p.get('image_url', '')}
+         for p in full_brand_products],
+        ensure_ascii=False, indent=2
+    )
+
+    competitors_str = json.dumps(COMPETITOR_STORES, ensure_ascii=False)
+
+    missing_section = ""
+    if include_missing_search:
+        missing_section = f"""
+### المهمة 3: المنتجات الناقصة (تشغيل لمرة واحدة لكل ماركة — هذه أول دفعة)
+قارن قائمتنا الكاملة لماركة "{brand_name}" أعلاه بالمتوفر في المتاجر السعودية المذكورة:
+{competitors_str}
+
+استخرج فقط العطور التي يبيعها هؤلاء المنافسون **ولا توجد** في قائمتنا الكاملة. لا تخترع أي عطر — كل عطر مقترح يجب أن يكون موجوداً فعلاً في متجر منافس واحد على الأقل من القائمة، واذكر اسم المتجر في حقل source_store.
+
+لكل ناقص جديد: ابحث عن image_url_1 (زجاجة لحالها) و image_url_2 (زجاجة + كرتون) واملأ description بقالب العطور الجديدة الإلزامي."""
+    else:
+        missing_section = """
+### المهمة 3: المنتجات الناقصة
+تخطّ هذه المهمة في الدفعة الحالية وأعد missing_products: [] (تم تنفيذها في الدفعة الأولى)."""
+
+    prompt = f"""أنت تعالج ماركة "{brand_name}" — الدفعة {batch_index + 1} من {total_batches}.
+
+## قائمتنا الكاملة لهذه الماركة (للمقارنة ومنع التهلوس وللبحث عن صور التساتر):
+{full_catalog}
+
+## منتجات هذه الدفعة الحالية (للتحديث):
+عدد منتجات الدفعة: {len(products)}
+{batch_summary}
+
+**المطلوب:**
+
+### المهمة 1: تحديث الأوصاف
+لكل منتج في الدفعة الحالية، أنشئ new_description بالـ HTML الإلزامي:
+- إذا كان المنتج تستر (يحتوي اسمه على "تستر" أو "Tester") → استخدم قالب التساتر.
+- وإلا → استخدم قالب العطور الجديدة/الأساسية.
+
+### المهمة 2: التساتر الناقصة (Deep Tester Search)
+مرّ على القائمة الكاملة للماركة وحدد العطور الموجودة لدينا التي **لا يوجد** لها نسخة تستر في قائمتنا. لكل عطر كهذا، تحقق من توفر تستر منه في المتاجر السعودية المذكورة، وإن توفر أنشئ منتج تستر جديد:
+- name: اسم العطر + كلمة "تستر"
+- is_new: true
+- original_price: السعر الأساسي من قائمتنا
+- new_price: مطبقاً قاعدة التستر (خصم 70/150 ريال)
+- new_description: قالب التستر الإلزامي
+- image_url: انسخه من حقل image_url للعطر الأساسي في قائمتنا (لا تبحث عن صورة جديدة)
+- base_product_id: معرّف العطر الأساسي
+{missing_section}
+
+**أعد JSON صارم فقط يبدأ بـ {{ وينتهي بـ }} بلا أي نص خارجه:**
+
+{{
+  "brand": "{brand_name}",
+  "batch_index": {batch_index},
+  "products_updated": [
+    {{
+      "product_id": "string",
+      "name": "اسم المنتج الكامل",
+      "new_description": "<p>...</p>",
+      "seo_title": "عنوان SEO أقل من 60 حرف",
+      "seo_description": "وصف ميتا أقل من 155 حرف"
+    }}
+  ],
+  "testers_updated": [
+    {{
+      "product_id": null,
+      "base_product_id": "معرّف العطر الأساسي",
+      "name": "اسم العطر تستر",
+      "is_new": true,
+      "tester_available_in_market": true,
+      "source_store": "اسم المتجر السعودي الذي يبيع التستر",
+      "original_price": 0,
+      "new_price": 0,
+      "new_description": "<p>...</p>",
+      "image_url": "منسوخ من العطر الأساسي",
+      "notes": ""
+    }}
+  ],
+  "missing_products": [
+    {{
+      "name": "اسم العطر الكامل",
+      "type": "عطر مفرد",
+      "category": "العطور > عطور رجالية",
+      "price": 0,
+      "size_ml": 100,
+      "concentration": "EDP",
+      "gender": "رجالي",
+      "description": "<p>...</p>",
+      "brand": "{brand_name}",
+      "is_tester": false,
+      "source_store": "اسم المتجر السعودي الذي يبيعه",
+      "image_url_1": "رابط صورة الزجاجة لحالها بخلفية بيضاء",
+      "image_url_2": "رابط صورة الزجاجة بجوار الكرتون بخلفية بيضاء"
+    }}
+  ]
+}}"""
 
     response = model.generate_content(
         prompt,
-        generation_config=genai.GenerationConfig(**gen_config_kwargs),
+        generation_config=genai.GenerationConfig(temperature=0.0),
     )
     return extract_json(response.text)
 
 
-def _call_batch_with_retry(*args, **kwargs) -> dict:
-    """إعادة المحاولة مع Exponential Backoff."""
-    last_err = None
-    for attempt in range(MAX_RETRIES):
-        try:
-            return _call_gemini_single_batch(*args, **kwargs)
-        except Exception as e:
-            last_err = e
-            if attempt < MAX_RETRIES - 1:
-                wait = (2 ** attempt) * 5  # 5s, 10s, 20s
-                time.sleep(wait)
-    raise last_err if last_err else RuntimeError("فشل غير معروف في الدفعة")
-
-
-def call_gemini_brand(
-    brand_name: str,
-    products: list,
-    api_key: str,
-    model_name: str = 'gemini-2.0-flash',
-    use_grounding: bool = True,
-    progress_cb=None,
-) -> dict:
-    """معالجة ماركة كاملة عبر دفعات صغيرة، مع دمج النتائج وحفظ احتياطي."""
-    if not products:
+def merge_batch_results(accum: dict, new: dict) -> dict:
+    """Merge a new batch result into the accumulator for the brand."""
+    if not accum:
         return {
-            'brand': brand_name,
-            'products_updated': [],
-            'testers_updated': [],
-            'missing_products': [],
+            'brand': new.get('brand', ''),
+            'products_updated': list(new.get('products_updated', [])),
+            'testers_updated': list(new.get('testers_updated', [])),
+            'missing_products': list(new.get('missing_products', [])),
         }
-
-    batches = [products[i:i + BATCH_SIZE]
-               for i in range(0, len(products), BATCH_SIZE)]
-    total_batches = len(batches)
-
-    merged = {
-        'brand': brand_name,
-        'products_updated': [],
-        'testers_updated': [],
-        'missing_products': [],
-    }
-    failed_batches = []
-
-    for b_idx, batch in enumerate(batches):
-        if progress_cb:
-            progress_cb(b_idx, total_batches, 'start', None)
-        try:
-            part = _call_batch_with_retry(
-                brand_name, batch, api_key, model_name,
-                use_grounding, b_idx, total_batches,
-            )
-            merged['products_updated'].extend(part.get('products_updated', []) or [])
-            merged['testers_updated'].extend(part.get('testers_updated', []) or [])
-            merged['missing_products'].extend(part.get('missing_products', []) or [])
-            if progress_cb:
-                progress_cb(b_idx, total_batches, 'done', part)
-        except Exception as e:
-            failed_batches.append({'batch_idx': b_idx, 'error': str(e),
-                                   'product_ids': [p.get('id') for p in batch]})
-            if progress_cb:
-                progress_cb(b_idx, total_batches, 'failed', str(e))
-
-        # استراحة بين الدفعات (ليس بعد الأخيرة)
-        if b_idx < total_batches - 1:
-            time.sleep(BATCH_SLEEP_SEC)
-
-    if failed_batches:
-        merged['_failed_batches'] = failed_batches
-
-    return merged
+    accum['products_updated'].extend(new.get('products_updated', []))
+    # de-dupe testers by name
+    existing_tester_names = {t.get('name', '').strip().lower() for t in accum['testers_updated']}
+    for t in new.get('testers_updated', []):
+        if t.get('name', '').strip().lower() not in existing_tester_names:
+            accum['testers_updated'].append(t)
+            existing_tester_names.add(t.get('name', '').strip().lower())
+    # missing only from first batch normally, but de-dupe just in case
+    existing_missing_names = {m.get('name', '').strip().lower() for m in accum['missing_products']}
+    for m in new.get('missing_products', []):
+        if m.get('name', '').strip().lower() not in existing_missing_names:
+            accum['missing_products'].append(m)
+            existing_missing_names.add(m.get('name', '').strip().lower())
+    return accum
 
 
 def build_output_excel(result: dict, original_df: pd.DataFrame, template_bytes: bytes) -> bytes:
@@ -411,6 +455,7 @@ def build_output_excel(result: dict, original_df: pd.DataFrame, template_bytes: 
     desc_col  = find_col(original_df, 'description')
     cat_col   = find_col(original_df, 'category')
     qty_col   = find_col(original_df, 'quantity')
+    img_col   = find_col(original_df, 'images')
 
     brand_name = result.get('brand', '')
 
@@ -441,7 +486,7 @@ def build_output_excel(result: dict, original_df: pd.DataFrame, template_bytes: 
 
     all_cols = list(original_df.columns)
 
-    # New tester products
+    # New tester products — image_url should already be copied from base product by the model
     for tester in result.get('testers_updated', []):
         if tester.get('is_new'):
             nr = {c: '' for c in all_cols}
@@ -451,9 +496,17 @@ def build_output_excel(result: dict, original_df: pd.DataFrame, template_bytes: 
             if brand_col: nr[brand_col] = brand_name
             if cat_col:   nr[cat_col] = 'العطور > عطور التساتر'
             if qty_col:   nr[qty_col] = 10
+            if img_col:
+                img = tester.get('image_url', '')
+                # Fallback: lookup base product's image from original_df
+                if not img and tester.get('base_product_id') and 'No.' in original_df.columns:
+                    base_match = original_df[original_df['No.'].astype(str) == str(tester['base_product_id'])]
+                    if not base_match.empty:
+                        img = str(base_match.iloc[0].get(img_col, '') or '')
+                nr[img_col] = img
             rows.append(pd.Series(nr))
 
-    # Missing products
+    # Missing products — combine image_url_1 and image_url_2 (Salla supports comma-separated URLs)
     for missing in result.get('missing_products', []):
         nr = {c: '' for c in all_cols}
         if name_col:  nr[name_col] = missing.get('name', '')
@@ -462,6 +515,9 @@ def build_output_excel(result: dict, original_df: pd.DataFrame, template_bytes: 
         if brand_col: nr[brand_col] = missing.get('brand', brand_name)
         if cat_col:   nr[cat_col] = missing.get('category', '')
         if qty_col:   nr[qty_col] = 10
+        if img_col:
+            imgs = [missing.get('image_url_1', ''), missing.get('image_url_2', '')]
+            nr[img_col] = ','.join([u for u in imgs if u])
         rows.append(pd.Series(nr))
 
     output_df = pd.DataFrame(rows) if rows else brand_df.copy()
@@ -571,31 +627,6 @@ with st.sidebar:
     if template_file:
         st.session_state.template_bytes = template_file.read()
         st.success("✅ تم تحميل القالب")
-
-    # ─── استرجاع نسخة احتياطية ───────────────────────────────────────────
-    if os.path.exists(BACKUP_FILE):
-        st.divider()
-        st.markdown("## 💾 النسخة الاحتياطية")
-        backup_data = _load_backup()
-        st.caption(f"📦 {len(backup_data)} ماركة محفوظة محلياً")
-        col_r1, col_r2 = st.columns(2)
-        with col_r1:
-            if st.button("♻️ استرجاع", use_container_width=True):
-                st.session_state.brand_results = backup_data
-                st.success(f"✅ تم استرجاع {len(backup_data)} ماركة")
-                st.rerun()
-        with col_r2:
-            try:
-                with open(BACKUP_FILE, 'rb') as _bf:
-                    st.download_button(
-                        "⬇️ تحميل",
-                        data=_bf.read(),
-                        file_name=BACKUP_FILE,
-                        mime="application/json",
-                        use_container_width=True,
-                    )
-            except Exception:
-                pass
 
     if uploaded_file and st.button("📊 تحليل الملف", use_container_width=True, type="primary"):
         with st.spinner("جاري تحليل الملف..."):
@@ -947,7 +978,14 @@ if st.session_state.waiting_confirm and st.session_state.current_result:
         use_container_width=True,
     ):
         st.session_state.brand_results[current_brand] = result
-        _save_backup(st.session_state.brand_results)  # حفظ احتياطي تلقائي
+        # Clean up autosave for this brand
+        try:
+            _safe = re.sub(r'[^\w]', '_', current_brand)
+            _p = os.path.join(".mahwous_autosave", f"{_safe}.json")
+            if os.path.exists(_p):
+                os.remove(_p)
+        except Exception:
+            pass
         st.session_state.current_brand_idx += 1
         st.session_state.waiting_confirm = False
         st.session_state.current_result = None
@@ -1010,71 +1048,79 @@ status_msg = st.empty()
 brand_lbl.markdown("**الخطوة 1/3:** جاري تجهيز بيانات المنتجات...")
 brand_bar.progress(5)
 
-# Build products payload — تنظيف NaN قبل التحويل لـ JSON
-brand_df_clean = brand_df.fillna("")
+# Build products payload
+img_col_now = find_col(df, 'images')
 products_payload = []
 if name_col:
-    for _, row in brand_df_clean.iterrows():
-        try:
-            price_val = float(pd.to_numeric(row.get(price_col, 0), errors='coerce') or 0)
-        except Exception:
-            price_val = 0.0
+    for _, row in brand_df.iterrows():
         products_payload.append({
             'id': str(row.get('No.', row.name)),
             'name': str(row.get(name_col, '')),
-            'price': price_val,
+            'price': float(pd.to_numeric(row.get(price_col, 0), errors='coerce') or 0),
             'description': str(row.get(desc_col, ''))[:300] if desc_col else '',
+            'image_url': str(row.get(img_col_now, '') or '').split(',')[0].strip() if img_col_now else '',
         })
 
 n = len(products_payload)
-total_batches_est = max(1, (n + BATCH_SIZE - 1) // BATCH_SIZE)
 
-brand_bar.progress(15)
-brand_lbl.markdown(
-    f"**الخطوة 2/3:** إرسال {n} منتج على {total_batches_est} دفعة "
-    f"(حجم الدفعة={BATCH_SIZE}) إلى Gemini AI..."
-)
-prod_bar.progress(0.0)
-prod_lbl.markdown("⏳ بدء معالجة الدفعات...")
-status_msg.info(
-    f"🤖 يعمل الذكاء الاصطناعي على:\n"
-    f"- تحديث {n} وصف بكلمات مفتاحية SEO (دفعات من {BATCH_SIZE})\n"
-    f"- البحث عن التساتر المتاحة لـ {current_brand} في السوق السعودي\n"
-    f"- اكتشاف المنتجات الناقصة\n"
-    f"- استراحة {BATCH_SLEEP_SEC} ثانية بين الدفعات لتفادي Rate Limit"
-)
+# ─── BATCHING ────────────────────────────────────────────────────────────────
+BATCH_SIZE = 25
+batches = [products_payload[i:i + BATCH_SIZE] for i in range(0, n, BATCH_SIZE)] or [[]]
+total_batches = len(batches)
 
+brand_bar.progress(10)
+brand_lbl.markdown(f"**الخطوة 1/3:** {n} منتج → {total_batches} دفعة (حجم الدفعة {BATCH_SIZE})")
 
-def _ui_progress(b_idx, total, phase, payload):
-    frac = b_idx / max(total, 1)
-    if phase == 'start':
-        prod_bar.progress(min(frac + 0.01, 1.0))
-        prod_lbl.markdown(
-            f"📦 الدفعة {b_idx + 1}/{total} — جاري الإرسال إلى Gemini..."
-        )
-    elif phase == 'done':
-        done_frac = (b_idx + 1) / max(total, 1)
-        prod_bar.progress(min(done_frac, 1.0))
-        n_p = len(payload.get('products_updated', [])) if payload else 0
-        prod_lbl.markdown(
-            f"✅ الدفعة {b_idx + 1}/{total} اكتملت — {n_p} وصف في هذه الدفعة"
-        )
-        brand_bar.progress(min(15 + int(done_frac * 70), 95))
-    elif phase == 'failed':
-        prod_lbl.markdown(
-            f"⚠️ الدفعة {b_idx + 1}/{total} فشلت بعد {MAX_RETRIES} محاولات — تم تجاوزها"
-        )
+# Auto-save key for resuming
+SAVE_DIR = ".mahwous_autosave"
+os.makedirs(SAVE_DIR, exist_ok=True)
+safe_brand_key = re.sub(r'[^\w]', '_', current_brand)
+autosave_path = os.path.join(SAVE_DIR, f"{safe_brand_key}.json")
 
+accumulated = {}
+# Resume from autosave if present
+if os.path.exists(autosave_path):
+    try:
+        with open(autosave_path, 'r', encoding='utf-8') as f:
+            accumulated = json.load(f)
+    except Exception:
+        accumulated = {}
+
+start_batch = accumulated.get('_completed_batches', 0)
 
 try:
-    result = call_gemini_brand(
-        brand_name=current_brand,
-        products=products_payload,
-        api_key=st.session_state.api_key,
-        model_name=st.session_state.model_name,
-        use_grounding=True,
-        progress_cb=_ui_progress,
-    )
+    for b_idx in range(start_batch, total_batches):
+        batch = batches[b_idx]
+        brand_lbl.markdown(f"**الدفعة {b_idx + 1}/{total_batches}:** إرسال إلى Gemini AI...")
+        prod_bar.progress((b_idx) / total_batches)
+        prod_lbl.markdown(f"📦 الدفعة {b_idx + 1}/{total_batches} — {len(batch)} منتج")
+        status_msg.info(
+            f"🤖 الدفعة {b_idx + 1}/{total_batches} لـ {current_brand}\n"
+            f"- {'بحث النواقص (مرة واحدة)' if b_idx == 0 else 'تخطي بحث النواقص'}\n"
+            f"- بحث التساتر الناقصة + تحديث الأوصاف"
+        )
+
+        batch_result = call_gemini_brand(
+            brand_name=current_brand,
+            products=batch,
+            full_brand_products=products_payload,
+            api_key=st.session_state.api_key,
+            model_name=st.session_state.model_name,
+            use_grounding=True,
+            include_missing_search=(b_idx == 0),
+            batch_index=b_idx,
+            total_batches=total_batches,
+        )
+        accumulated = merge_batch_results(accumulated, batch_result)
+        accumulated['_completed_batches'] = b_idx + 1
+
+        # Auto-save after each batch
+        with open(autosave_path, 'w', encoding='utf-8') as f:
+            json.dump(accumulated, f, ensure_ascii=False, indent=2)
+
+        prod_bar.progress((b_idx + 1) / total_batches)
+
+    result = {k: v for k, v in accumulated.items() if not k.startswith('_')}
 
     brand_bar.progress(75)
     prod_bar.progress(0.7)
@@ -1113,14 +1159,21 @@ except Exception as e:
         prod_lbl.markdown("🔄 جاري الإعادة...")
         prod_bar.progress(0.1)
         try:
-            result = call_gemini_brand(
-                brand_name=current_brand,
-                products=products_payload,
-                api_key=st.session_state.api_key,
-                model_name=st.session_state.model_name,
-                use_grounding=False,
-                progress_cb=_ui_progress,
-            )
+            fallback_acc = {}
+            for b_idx, batch in enumerate(batches):
+                br = call_gemini_brand(
+                    brand_name=current_brand,
+                    products=batch,
+                    full_brand_products=products_payload,
+                    api_key=st.session_state.api_key,
+                    model_name=st.session_state.model_name,
+                    use_grounding=False,
+                    include_missing_search=(b_idx == 0),
+                    batch_index=b_idx,
+                    total_batches=len(batches),
+                )
+                fallback_acc = merge_batch_results(fallback_acc, br)
+            result = {k: v for k, v in fallback_acc.items() if not k.startswith('_')}
             brand_bar.progress(100)
             prod_bar.progress(1.0)
             status_msg.success("✅ اكتملت المعالجة (بدون Google Search)")
