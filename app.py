@@ -10,7 +10,10 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from google import genai
 from google.genai import types as genai_types
-from openpyxl import load_workbook
+from openpyxl import load_workbook, Workbook
+from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.utils import get_column_letter
+from difflib import SequenceMatcher
 
 # ─── PAGE CONFIG ─────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -397,94 +400,35 @@ def extract_writing_dna(df: pd.DataFrame, max_samples: int = 5) -> str:
 
 
 def extract_json(text: str) -> dict:
-    """
-    Robustly extract and parse JSON from Gemini response.
-    Fixes (in order):
-      1. Markdown code fences (```json ... ```)
-      2. Invalid \\uXXXX  (fewer than 4 hex digits)
-      3. Any other invalid JSON escape sequence (\\x where x ∉ "\\/bfnrtu")
-      4. Literal newlines / carriage returns / tabs inside string values
-      5. Residual ASCII control characters
-      6. Trailing commas before } or ]
-    Falls back to json_repair if available, then raises with a diagnostic snippet.
-    """
-    # ── Step 1: strip markdown fences ────────────────────────────────────────
-    text = re.sub(r'^\s*```(?:json)?\s*\n?', '', text, flags=re.MULTILINE)
-    text = re.sub(r'\n?\s*```\s*$',          '', text, flags=re.MULTILINE)
+    """Robustly extract JSON from Gemini response."""
     text = text.strip()
-
-    # ── Step 2: find outermost JSON object ───────────────────────────────────
+    text = re.sub(r'^```(?:json)?\s*', '', text, flags=re.MULTILINE)
+    text = re.sub(r'\s*```\s*$', '', text, flags=re.MULTILINE)
+    text = text.strip()
     start = text.find('{')
-    end   = text.rfind('}')
+    end = text.rfind('}')
     if start == -1 or end == -1:
         snippet = (text[:300] + '...') if len(text) > 300 else text
-        raise ValueError(f"لم يُرجع Gemini JSON صالحاً ({len(text)} حرف): {snippet!r}")
-    raw = text[start:end + 1]
-
-    # ── Quick attempt with strict=False (handles many LLM quirks) ────────────
+        raise ValueError(
+            f"لم يُرجع Gemini JSON صالحاً. مقتطف من الرد ({len(text)} حرف): {snippet!r}"
+        )
+    body = text[start:end + 1]
     try:
-        return json.loads(raw, strict=False)
-    except (json.JSONDecodeError, ValueError):
+        return json.loads(body, strict=False)
+    except json.JSONDecodeError:
         pass
-
-    # ── Step 3: fix invalid \uXXXX  ──────────────────────────────────────────
-    raw = re.sub(r'\\u(?![0-9a-fA-F]{4})', r'\\\\u', raw)
-
-    # ── Step 4: fix other invalid escape sequences ────────────────────────────
-    # Valid JSON escapes: \" \\ \/ \b \f \n \r \t \uXXXX
-    raw = re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', raw)
-
-    # ── Step 5: fix literal control chars inside string values ────────────────
-    result      = []
-    in_string   = False
-    escape_next = False
-    for ch in raw:
-        if escape_next:
-            result.append(ch)
-            escape_next = False
-        elif ch == '\\' and in_string:
-            result.append(ch)
-            escape_next = True
-        elif ch == '"':
-            in_string = not in_string
-            result.append(ch)
-        elif in_string and ch == '\n':
-            result.append('\\n')
-        elif in_string and ch == '\r':
-            result.append('\\r')
-        elif in_string and ch == '\t':
-            result.append('\\t')
-        else:
-            result.append(ch)
-    cleaned = ''.join(result)
-
-    # ── Step 6: trailing commas ───────────────────────────────────────────────
-    cleaned = re.sub(r',(\s*[}\]])', r'\1', cleaned)
-
-    try:
-        return json.loads(cleaned, strict=False)
-    except (json.JSONDecodeError, ValueError):
-        pass
-
-    # ── Step 7: strip residual control chars and retry ───────────────────────
-    cleaned2 = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', cleaned)
-    try:
-        return json.loads(cleaned2, strict=False)
-    except (json.JSONDecodeError, ValueError):
-        pass
-
-    # ── Step 8: json_repair as last resort ───────────────────────────────────
+    # Use json_repair (handles LLM-broken JSON: unescaped quotes, trailing commas, etc.)
     try:
         from json_repair import repair_json
-        repaired = repair_json(cleaned2, return_objects=True)
+        repaired = repair_json(body, return_objects=True)
         if isinstance(repaired, dict):
             return repaired
     except Exception:
         pass
-
-    # ── Give up with diagnostic info ─────────────────────────────────────────
-    snippet = (cleaned2[:400] + '...') if len(cleaned2) > 400 else cleaned2
-    raise ValueError(f"فشل تحليل JSON بعد كل المحاولات. المقتطف: {snippet!r}")
+    # Fallback regex repairs
+    repaired = re.sub(r',(\s*[}\]])', r'\1', body)
+    repaired = re.sub(r'(?<!\\)\\(?![\\/"bfnrtu])', r'\\\\', repaired)
+    return json.loads(repaired, strict=False)
 
 
 def call_gemini_brand(
@@ -499,13 +443,13 @@ def call_gemini_brand(
     total_batches: int = 1,
     progress_cb=None,
 ) -> dict:
-    """Call Gemini API for a single brand batch.
+    """Call Gemini API for a single brand batch with retry logic.
 
-    - `products`: current batch (for description updates).
-    - `full_brand_products`: ALL products of the brand, used for hallucination-prevention
-      and tester base-image lookup. Sent every batch.
-    - `include_missing_search`: only True for the first batch — the brand-wide gap
-      analysis runs once to avoid duplicate suggestions across batches.
+    التغييرات الجوهرية:
+    - 3 محاولات مع exponential backoff (2**attempt ثانية بين المحاولات)
+    - عند 429/ResourceExhausted: انتظار إضافي 30 ثانية
+    - تعطيل use_grounding يحدث فقط عند PERMISSION_DENIED أو INVALID_ARGUMENT
+    - عند فشل كل المحاولات: ترجع {} مع رسالة خطأ واضحة (لا بيانات وهمية)
     """
     client = genai.Client(api_key=api_key)
 
@@ -643,75 +587,168 @@ def call_gemini_brand(
   ]
 }}"""
 
-    config_kwargs = dict(
-        system_instruction=system_instruction,
-        temperature=0.0,
-        max_output_tokens=65536,
-    )
-    if use_grounding:
-        config_kwargs['tools'] = [genai_types.Tool(google_search=genai_types.GoogleSearch())]
-    else:
-        config_kwargs['response_mime_type'] = 'application/json'
+    # ─── Retry Loop (التغيير الجوهري) ───────────────────────────────────────
+    MAX_RETRIES = 3
+    last_error = None
 
-    config = genai_types.GenerateContentConfig(**config_kwargs)
-
-    stream = client.models.generate_content_stream(
-        model=model_name,
-        contents=prompt,
-        config=config,
-    )
-
-    text = ''
-    last_chunk = None
-    for chunk in stream:
-        last_chunk = chunk
-        t = ''
+    for attempt in range(MAX_RETRIES):
         try:
-            t = chunk.text or ''
-        except Exception:
-            for cand in getattr(chunk, 'candidates', []) or []:
-                content = getattr(cand, 'content', None)
-                if not content:
-                    continue
-                for part in getattr(content, 'parts', []) or []:
-                    t += getattr(part, 'text', '') or ''
-        if t:
-            text += t
-            if progress_cb:
+            # Configure each attempt — use_grounding قد يتغير بين المحاولات
+            config_kwargs = dict(
+                system_instruction=system_instruction,
+                temperature=0.0,
+                max_output_tokens=65536,
+            )
+            if use_grounding:
+                config_kwargs['tools'] = [
+                    genai_types.Tool(google_search=genai_types.GoogleSearch())
+                ]
+            else:
+                config_kwargs['response_mime_type'] = 'application/json'
+
+            config = genai_types.GenerateContentConfig(**config_kwargs)
+
+            stream = client.models.generate_content_stream(
+                model=model_name,
+                contents=prompt,
+                config=config,
+            )
+
+            text = ''
+            last_chunk = None
+            for chunk in stream:
+                last_chunk = chunk
+                t = ''
                 try:
-                    progress_cb(len(text))
+                    t = chunk.text or ''
                 except Exception:
-                    pass
+                    for cand in getattr(chunk, 'candidates', []) or []:
+                        content = getattr(cand, 'content', None)
+                        if not content:
+                            continue
+                        for part in getattr(content, 'parts', []) or []:
+                            t += getattr(part, 'text', '') or ''
+                if t:
+                    text += t
+                    if progress_cb:
+                        try:
+                            progress_cb(len(text))
+                        except Exception:
+                            pass
 
-    finish = ''
-    safety = ''
-    try:
-        finish = str(last_chunk.candidates[0].finish_reason) if last_chunk else ''
-        safety = str(getattr(last_chunk.candidates[0], 'safety_ratings', ''))[:200] if last_chunk else ''
-    except Exception:
-        pass
+            finish = ''
+            try:
+                finish = str(last_chunk.candidates[0].finish_reason) if last_chunk else ''
+            except Exception:
+                pass
 
-    if not text.strip():
-        hint = ''
-        if 'MAX_TOKENS' in finish:
-            hint = ' — قلّل BATCH_SIZE أو ارفع max_output_tokens.'
-        elif 'SAFETY' in finish:
-            hint = ' — حُجبت الاستجابة بفلتر أمان.'
-        raise ValueError(
-            f"Gemini أعاد رداً فارغاً (finish_reason={finish}){hint} safety={safety}"
-        )
+            if not text.strip():
+                raise ValueError(f"Gemini أعاد رداً فارغاً (finish_reason={finish})")
 
-    try:
-        return extract_json(text)
-    except (ValueError, json.JSONDecodeError) as e:
-        raise ValueError(f"{e} | finish_reason={finish}") from e
+            # نجاح → ارجع النتيجة المُحلَّلة
+            return extract_json(text)
+
+        except Exception as e:
+            last_error = e
+            err_str = str(e).lower()
+            err_type = type(e).__name__.lower()
+
+            # تشخيص نوع الخطأ
+            is_rate_limit = (
+                '429' in err_str
+                or 'resourceexhausted' in err_type
+                or 'resource_exhausted' in err_str
+                or 'quota' in err_str
+                or 'rate limit' in err_str
+                or 'rate_limit' in err_str
+            )
+            is_config_error = (
+                'permission_denied' in err_str
+                or 'permissiondenied' in err_type
+                or 'invalid_argument' in err_str
+                or 'invalidargument' in err_type
+            )
+
+            # المحاولة الأخيرة → اخرج للسطر النهائي
+            if attempt == MAX_RETRIES - 1:
+                break
+
+            # 1) Rate limit → 30 ثانية + exponential backoff
+            if is_rate_limit:
+                wait = 30 + (2 ** attempt)
+                print(
+                    f"[call_gemini_brand][{brand_name}] ⏳ Rate limit "
+                    f"(محاولة {attempt + 1}/{MAX_RETRIES}). انتظار {wait}ث..."
+                )
+                time.sleep(wait)
+                continue
+
+            # 2) Config error + grounding مُفعَّل → عطّل grounding وأعد المحاولة
+            #    هذه الحالة الوحيدة المسموح فيها بتعطيل البحث
+            if is_config_error and use_grounding:
+                print(
+                    f"[call_gemini_brand][{brand_name}] ⚠️ خطأ تكوين Grounding "
+                    f"(محاولة {attempt + 1}/{MAX_RETRIES}). تعطيله للمحاولة التالية فقط."
+                )
+                use_grounding = False
+                time.sleep(2 ** attempt)
+                continue
+
+            # 3) أي خطأ آخر → exponential backoff فقط (Grounding يبقى مُفعَّلاً)
+            wait = 2 ** attempt
+            print(
+                f"[call_gemini_brand][{brand_name}] 🔄 خطأ مؤقت "
+                f"(محاولة {attempt + 1}/{MAX_RETRIES}): {str(e)[:150]}. انتظار {wait}ث..."
+            )
+            time.sleep(wait)
+
+    # كل المحاولات فشلت → ارجع {} بدلاً من رفع استثناء أو إرجاع بيانات مخترعة
+    print(
+        f"[call_gemini_brand][{brand_name}] ❌ فشلت جميع المحاولات "
+        f"({MAX_RETRIES}/{MAX_RETRIES}). آخر خطأ: {last_error}. "
+        f"إرجاع نتيجة فارغة بدلاً من بيانات قد تكون مخترعة."
+    )
+    return {}
 
 
-def _normalize_perfume_name(name: str) -> str:
-    """Split-based normalization — immune to attached digits and  boundary failures."""
+def _normalize_perfume_name(name: str) -> tuple:
+    """تطبيع اسم العطر مع استخراج الحجم منفصلاً.
+
+    التغيير: ترجع tuple (normalized_name, size) بدلاً من str.
+    Example: "Dior Sauvage EDP 100ml" -> ("dior sauvage", "100ml")
+    """
     if not name:
-        return ''
+        return ('', '')
+
     s = str(name).lower().strip()
+
+    # 1) توحيد الأرقام العربية إلى لاتينية
+    arabic_to_latin = str.maketrans('٠١٢٣٤٥٦٧٨٩', '0123456789')
+    s = s.translate(arabic_to_latin)
+
+    # 2) إزالة التشكيل العربي
+    s = re.sub(r'[ً-ٰٟ]', '', s)
+
+    # 3) استخراج الحجم في متغير منفصل قبل أي تنظيف آخر
+    size = ''
+    size_match = re.search(r'(\d+)\s*(?:ml|مل)\b', s, flags=re.IGNORECASE)
+    if size_match:
+        size = f"{size_match.group(1)}ml"
+        s = re.sub(r'\d+\s*(?:ml|مل)\b', ' ', s, flags=re.IGNORECASE)
+
+    # 4) إزالة مصطلحات التركيز (من الأطول للأقصر لتجنّب القطع الجزئي)
+    concentration_terms = [
+        'eau de parfum', 'eau de toilette', 'eau de cologne',
+        'parfum', 'perfume', 'cologne',
+        'edp', 'edt', 'edc',
+        'أو دو برفيوم', 'أو دو بارفيوم', 'أو دو بارفان',
+        'أو دو تواليت', 'أو دو كولونيا',
+        'برفيوم', 'بارفيوم', 'بارفان', 'تواليت', 'كولونيا',
+    ]
+    for term in sorted(concentration_terms, key=len, reverse=True):
+        s = s.replace(term, ' ')
+
+    # 5) معالجة الأرقام المكتوبة بالحروف (1 Million, 212, إلخ)
     _arabic_num_map = {
         'ون': '1', 'واحد': '1', 'وان': '1',
         'تو': '2', 'اثنين': '2', 'اثنان': '2',
@@ -725,118 +762,169 @@ def _normalize_perfume_name(name: str) -> str:
         'تن': '10', 'عشرة': '10', 'عشر': '10',
     }
     s = ' '.join(_arabic_num_map.get(w, w) for w in s.split())
-    s = re.sub(r'[ً-ٰٟ]', '', s)
-    s = re.sub(r'[^\w؀-ۿ\s]', ' ', s)
 
-    # Force whitespace around digit runs so '100مل' splits into '100' 'مل'
-    s = re.sub(r'(\d+)\s*(ml|مل)', ' ', s, flags=re.IGNORECASE)
-
-    replacements = {
-        'eau de parfum': 'edp', 'أو دو بارفان': 'edp', 'بارفان': 'edp', 'بارفيوم': 'edp', 'parfum': 'edp',
-        'eau de toilette': 'edt', 'أو دو تواليت': 'edt', 'تواليت': 'edt',
-        'إنتنس': 'intense', 'انتنس': 'intense',
+    # 6) إزالة كلمات الضوضاء
+    junk_words = {
+        'للرجال', 'للنساء', 'رجالي', 'نسائي', 'النسائي', 'الرجالي',
+        'عطر', 'تستر', 'tester', 'testr',
+        'بخاخ', 'spray', 'للجنسين', 'unisex',
+        'قديم', 'جديد', 'النسخه', 'النسخة',
+        'intense', 'إنتنس', 'انتنس',
     }
-    for k, v in replacements.items():
-        s = s.replace(k, v)
+    for j in junk_words:
+        s = re.sub(rf'\b{re.escape(j)}\b', ' ', s)
 
-    junk = {
-        'للرجال', 'للنساء', 'رجالي', 'نسائي', 'عطر', 'تستر', 'tester',
-        'مل', 'ml', 'بخاخ', 'spray', 'للجنسين', 'unisex', 'قديم', 'جديد',
-        'النسائي', 'الرجالي'
-    }
-
+    # كلمات مع أل التعريف
     clean_words = []
     for w in s.split():
         cw = w[2:] if w.startswith('ال') and len(w) > 3 else w
-        if w in junk or cw in junk:
+        if w in junk_words or cw in junk_words:
             continue
-        # Keep digit words — they are part of perfume identity (1 Million, 212, 9 PM). Size digits already stripped above.
         clean_words.append(cw)
+    s = ' '.join(clean_words)
 
-    return ''.join(clean_words)
+    # 7) إزالة علامات الترقيم وتطبيع الفراغات
+    s = re.sub(r'[^\w\u0600-\u06FF\s]', ' ', s)
+    s = re.sub(r'\s+', ' ', s).strip()
+
+    return (s, size)
 
 
 def filter_duplicates(result: dict, existing_products: list) -> dict:
-    """Hard safety net against LLM hallucinations.
+    """شبكة أمان ضد تكرارات Gemini والاختراعات.
 
-    Step 1 — INTERNAL deduplication inside the freshly generated payload:
-      * testers_to_add: keep only the first occurrence per base_product_id
-        (and per normalized name as a secondary guard).
-      * missing_products: keep only the first occurrence per normalized name.
-    Step 2 — drop any remaining items that already exist in our catalog.
-    Step 3 — guarantee schema keys exist (image_url_2 stays as "" if missing).
+    التغييرات الجوهرية:
+    - يستخدم SequenceMatcher (difflib) بعتبة 85% للمطابقة التقريبية
+    - الحجم المُستخرج يجب أن يتطابق تماماً (أو يكون فارغاً عند الطرفين)
+    - يطبع كل زوج محذوف لـ stdout: [DEDUP] '...' ≈ '...'
+    - يستخدم difflib فقط من stdlib (بدون مكتبات خارجية)
     """
-    existing_norms = {_normalize_perfume_name(p.get('name', '')) for p in existing_products}
+    SIMILARITY_THRESHOLD = 0.85
 
-    def matches_existing(norm: str) -> bool:
-        if not norm:
-            return True  # drop empty-name items as well
-        for ex in existing_norms:
-            if not ex:
+    # طبع كل المنتجات الموجودة في كاتالوجنا (norm + size)
+    existing_normed = []
+    for p in existing_products:
+        n, sz = _normalize_perfume_name(p.get('name', ''))
+        if n:
+            existing_normed.append((n, sz, p.get('name', '')))
+
+    def matches_existing(norm_name: str, size: str) -> bool:
+        """هل المنتج المُقترح مطابق لشيء موجود في الكاتالوج؟"""
+        if not norm_name:
+            return True  # نُسقط الأسماء الفارغة دائماً
+        for ex_n, ex_sz, _ in existing_normed:
+            if not ex_n:
                 continue
-            if norm == ex or (len(ex) > 8 and ex in norm) or (len(norm) > 8 and norm in ex):
+            # شرط الحجم: متطابق تماماً أو كلاهما فارغ
+            same_size = (size == ex_sz) or (not size and not ex_sz)
+            if not same_size:
+                continue
+            # شرط الاسم: تطابق نصي أو fuzzy ≥ 85%
+            ratio = SequenceMatcher(None, norm_name, ex_n).ratio()
+            if ratio >= SIMILARITY_THRESHOLD:
                 return True
         return False
 
-    # ── testers_to_add: dedupe by base_product_id, then by normalized name
+    def is_internal_duplicate(norm_name: str, size: str, seen: list) -> tuple:
+        """هل هذا العنصر مكرر داخل المصفوفة الحالية؟"""
+        if not norm_name:
+            return (True, '')
+        for s_n, s_sz, s_orig in seen:
+            same_size = (size == s_sz) or (not size and not s_sz)
+            if not same_size:
+                continue
+            ratio = SequenceMatcher(None, norm_name, s_n).ratio()
+            if ratio >= SIMILARITY_THRESHOLD:
+                return (True, s_orig)
+        return (False, '')
+
+    # ── 1. testers_to_add: dedup داخلي + مقارنة بالكاتالوج
     if 'testers_to_add' in result and isinstance(result['testers_to_add'], list):
-        seen_base_ids: set = set()
-        seen_tester_norms: set = set()
-        deduped_testers = []
+        seen_base_ids = set()
+        seen_norms = []  # list of (norm, size, original_name)
+        kept = []
         for t in result['testers_to_add']:
             if not isinstance(t, dict):
                 continue
             base_id = str(t.get('base_product_id', '') or '').strip()
-            norm = _normalize_perfume_name(t.get('name', ''))
-            size_key = str(t.get('size_ml', '') or '').strip()
-            composite_key = f"{norm}|{size_key}" if norm else ''
+            orig = t.get('name', '')
+            n, sz = _normalize_perfume_name(orig)
+            # السعر يكون من حقل size_ml — ندمجه مع الحجم لو كان مفقوداً
+            if not sz and t.get('size_ml'):
+                try:
+                    sz = f"{int(t['size_ml'])}ml"
+                except (ValueError, TypeError):
+                    pass
+
+            # دعدفة بالـ base_product_id (خط دفاع للتساتر عبر اللغات)
             if base_id and base_id in seen_base_ids:
+                print(f"[DEDUP][tester base_id] '{orig}' (base_id={base_id} مكرر)")
                 continue
-            if composite_key and composite_key in seen_tester_norms:
+            # دعدفة fuzzy داخلية
+            is_dup, dup_orig = is_internal_duplicate(n, sz, seen_norms)
+            if is_dup:
+                print(f"[DEDUP][tester internal] '{orig}' ≈ '{dup_orig}'")
                 continue
-            if matches_existing(norm):
+            # دعدفة ضد الكاتالوج
+            if matches_existing(n, sz):
+                print(f"[DEDUP][tester vs catalog] '{orig}' موجود مسبقاً")
                 continue
+
             if base_id:
                 seen_base_ids.add(base_id)
-            if composite_key:
-                seen_tester_norms.add(composite_key)
-            deduped_testers.append(t)
-        result['testers_to_add'] = deduped_testers
+            seen_norms.append((n, sz, orig))
+            kept.append(t)
+        result['testers_to_add'] = kept
 
-    # ── missing_products: dedupe by normalized name, enforce schema keys
+    # ── 2. missing_products: dedup داخلي + مقارنة بالكاتالوج + ضمان السكيما
     if 'missing_products' in result and isinstance(result['missing_products'], list):
-        seen_missing_norms: set = set()
-        deduped_missing = []
+        seen_norms = []
+        kept = []
         for m in result['missing_products']:
             if not isinstance(m, dict):
                 continue
-            norm = _normalize_perfume_name(m.get('name', ''))
-            if not norm or norm in seen_missing_norms:
+            orig = m.get('name', '')
+            n, sz = _normalize_perfume_name(orig)
+            if not sz and m.get('size_ml'):
+                try:
+                    sz = f"{int(m['size_ml'])}ml"
+                except (ValueError, TypeError):
+                    pass
+
+            is_dup, dup_orig = is_internal_duplicate(n, sz, seen_norms)
+            if is_dup:
+                print(f"[DEDUP][missing internal] '{orig}' ≈ '{dup_orig}'")
                 continue
-            if matches_existing(norm):
+            if matches_existing(n, sz):
+                print(f"[DEDUP][missing vs catalog] '{orig}' موجود مسبقاً في الكاتالوج")
                 continue
-            # Schema guarantee — never let image_url_2 be missing
+
+            # ضمان حقول السكيما
             m.setdefault('image_url_1', '')
             m.setdefault('image_url_2', '')
             if m.get('image_url_2') is None:
                 m['image_url_2'] = ''
-            seen_missing_norms.add(norm)
-            deduped_missing.append(m)
-        result['missing_products'] = deduped_missing
 
-    # ── testers_updated (legacy): keep existing-vs-catalog logic
+            seen_norms.append((n, sz, orig))
+            kept.append(m)
+        result['missing_products'] = kept
+
+    # ── 3. testers_updated (إن وُجد — نسخة قديمة)
     if 'testers_updated' in result and isinstance(result['testers_updated'], list):
+        seen_norms = []
         kept = []
-        seen_upd: set = set()
         for t in result['testers_updated']:
             if not isinstance(t, dict):
                 continue
-            norm = _normalize_perfume_name(t.get('name', ''))
-            if norm in seen_upd:
+            orig = t.get('name', '')
+            n, sz = _normalize_perfume_name(orig)
+            is_dup, dup_orig = is_internal_duplicate(n, sz, seen_norms)
+            if is_dup:
+                print(f"[DEDUP][tester_updated] '{orig}' ≈ '{dup_orig}'")
                 continue
-            if t.get('is_new') and matches_existing(norm):
+            if t.get('is_new') and matches_existing(n, sz):
                 continue
-            seen_upd.add(norm)
+            seen_norms.append((n, sz, orig))
             kept.append(t)
         result['testers_updated'] = kept
 
@@ -863,9 +951,9 @@ def merge_batch_results(accum: dict, new: dict) -> dict:
             existing_ids.add(bid)
 
     # 2. Hard filter for missing products (Internal Deduplication)
-    existing_norms = {_normalize_perfume_name(m.get('name', '')) for m in accum.get('missing_products', [])}
+    existing_norms = {_normalize_perfume_name(m.get('name', ''))[0] for m in accum.get('missing_products', [])}
     for m in new.get('missing_products', []):
-        norm = _normalize_perfume_name(m.get('name', ''))
+        norm = _normalize_perfume_name(m.get('name', ''))[0]
         if norm and norm not in existing_norms:
             accum['missing_products'].append(m)
             existing_norms.add(norm)
@@ -879,64 +967,43 @@ def merge_batch_results(accum: dict, new: dict) -> dict:
     return accum
 
 
-def build_output_excel(result: dict, original_df: pd.DataFrame, template_bytes: bytes) -> bytes:
-    """Build Salla-compatible Excel — NaN-safe, mandatory-field-safe, single-sheet."""
+def build_output_excel(
+    result: dict,
+    original_df: pd.DataFrame,
+    template_bytes: bytes = None,  # اختياري الآن — لم يعد مستخدماً
+) -> bytes:
+    """يبني ملف Excel متوافق 100% مع منصة سلة من الصفر.
+
+    التغييرات الجوهرية:
+    - يستخدم قائمة SALLA_COLUMNS الثابتة كمرجع وحيد للأعمدة
+    - يضمن الحقول الإلزامية: نوع المنتج, شحن, وزن, وحدة الوزن
+    - يُسقط أي عمود غير موجود في SALLA_COLUMNS (مثل No. والكمية المتوفرة)
+    - يضيف 'بيانات المنتج' في A1 و RTL على الورقة
+    - تنظيف صارم لـ NaN/None/<NA> -> ""
+    """
+    # ─── المصدر الوحيد للحقيقة لأعمدة سلة ───────────────────────────────────
+    SALLA_COLUMNS = [
+        'النوع ', 'أسم المنتج', 'تصنيف المنتج', 'صورة المنتج',
+        'وصف صورة المنتج', 'نوع المنتج', 'سعر المنتج', 'الوصف',
+        'هل يتطلب شحن؟', 'رمز المنتج sku', 'سعر التكلفة', 'السعر المخفض',
+        'تاريخ بداية التخفيض', 'تاريخ نهاية التخفيض',
+        'اقصي كمية لكل عميل', 'إخفاء خيار تحديد الكمية',
+        'اضافة صورة عند الطلب', 'الوزن', 'وحدة الوزن', 'الماركة',
+        'العنوان الترويجي', 'تثبيت المنتج', 'الباركود', 'السعرات الحرارية',
+        'MPN', 'GTIN', 'خاضع للضريبة ؟', 'سبب عدم الخضوع للضريبة',
+        '[1] الاسم', '[1] النوع', '[1] القيمة', '[1] الصورة / اللون',
+        '[2] الاسم', '[2] النوع', '[2] القيمة', '[2] الصورة / اللون',
+        '[3] الاسم', '[3] النوع', '[3] القيمة', '[3] الصورة / اللون',
+    ]
+
+    # ─── helpers ────────────────────────────────────────────────────────────
     brand_col = get_brand_col(original_df)
-    name_col  = find_col(original_df, 'name')
-    price_col = find_col(original_df, 'price')
-    desc_col  = find_col(original_df, 'description')
-    cat_col   = find_col(original_df, 'category')
-    img_col   = find_col(original_df, 'images')
-
+    cat_col = find_col(original_df, 'category')
+    img_col = find_col(original_df, 'images')
     brand_name = result.get('brand', '')
-    all_cols = list(original_df.columns)
-
-    def get_safe_row(base_id):
-        if not base_id or 'No.' not in original_df.columns:
-            return None
-        match = original_df[original_df['No.'].astype(str) == str(base_id)]
-        return match.iloc[0] if not match.empty else None
-
-    def _norm_hdr(s: str) -> str:
-        s = str(s).strip()
-        s = s.replace('أ', 'ا').replace('إ', 'ا').replace('آ', 'ا')
-        s = s.replace('ى', 'ي').replace('ة', 'ه')
-        return s
-
-    def fill_mandatory(nr):
-        for c in all_cols:
-            cs = str(c).strip()
-            ns = _norm_hdr(cs)
-            if 'نوع المنتج' in cs:
-                nr[c] = 'منتج جاهز'
-            elif cs == 'النوع':
-                nr[c] = 'منتج'
-            elif 'يتطلب شحن' in cs:
-                nr[c] = 'نعم'
-            elif 'اقصي كميه' in ns or 'اقصى كميه' in ns:
-                nr[c] = 2  # Salla requires >= 1
-            elif 'الكمية' in cs or 'الكميه' in ns:
-                nr[c] = 10
-            elif cs == 'الوزن':
-                nr[c] = 1
-            elif 'وحدة الوزن' in cs or 'وحده الوزن' in ns:
-                nr[c] = 'kg'
-            elif 'إخفاء خيار' in cs or 'اخفاء خيار' in ns:
-                nr[c] = 'لا'
-            elif 'الماركة' in cs and brand_col and c == brand_col:
-                nr[c] = brand_name
-        return nr
-
-    def _clean_category(cat: str) -> str:
-        if not cat:
-            return cat
-        parts = [p.strip() for p in str(cat).split(',') if p.strip()]
-        if not parts:
-            return cat
-        hierarchical = [p for p in parts if '>' in p]
-        return hierarchical[0] if hierarchical else max(parts, key=len)
 
     def safe(v, default=''):
+        """يحوّل أي قيمة إلى string نظيف بدون 'nan' / None / NA."""
         if v is None:
             return default
         try:
@@ -945,189 +1012,170 @@ def build_output_excel(result: dict, original_df: pd.DataFrame, template_bytes: 
         except (TypeError, ValueError):
             pass
         sv = str(v).strip()
-        if sv.lower() == 'nan' or sv == '':
+        if sv.lower() in ('nan', 'none', '<na>', 'null'):
             return default
         return sv
 
+    def get_base_row(base_id):
+        if not base_id or 'No.' not in original_df.columns:
+            return None
+        match = original_df[original_df['No.'].astype(str) == str(base_id)]
+        return match.iloc[0] if not match.empty else None
+
+    def clean_category(cat):
+        if not cat:
+            return 'العطور'
+        parts = [p.strip() for p in str(cat).split(',') if p.strip()]
+        if not parts:
+            return 'العطور'
+        hierarchical = [p for p in parts if '>' in p]
+        return hierarchical[0] if hierarchical else max(parts, key=len)
+
+    default_category = 'العطور'
+    if cat_col is not None and not original_df[cat_col].dropna().empty:
+        default_category = clean_category(original_df[cat_col].dropna().mode().iloc[0])
+
+    # ─── بناء الصفوف من نتيجة Gemini ────────────────────────────────────────
     rows = []
 
+    # 1) التساتر الجديدة
     for t in result.get('testers_to_add', []):
-        nr = {c: '' for c in all_cols}
-        base_r = get_safe_row(t.get('base_product_id'))
+        base_r = get_base_row(t.get('base_product_id'))
 
-        if name_col:  nr[name_col] = t.get('name', '')
-        if price_col: nr[price_col] = t.get('new_price', 0)
-        if desc_col:  nr[desc_col] = t.get('new_description', '')
-        if brand_col: nr[brand_col] = brand_name
+        # الصورة: من حقل t أولاً، ثم من المنتج الأساسي كـ fallback
+        img = safe(t.get('image_url', ''))
+        if not img and base_r is not None and img_col:
+            raw = safe(base_r.get(img_col, ''))
+            img = raw.split(',')[0].strip() if raw else ''
 
-        # Category: copy from base product, else fall back to 'العطور'
-        cat_val = ''
+        # التصنيف: من المنتج الأساسي ثم default
+        category = default_category
         if base_r is not None and cat_col:
-            cat_val = safe(base_r.get(cat_col, ''), '')
-        if cat_col:
-            if cat_val:
-                nr[cat_col] = _clean_category(cat_val)
-            elif not original_df[cat_col].dropna().empty:
-                nr[cat_col] = _clean_category(original_df[cat_col].dropna().mode().iloc[0])
-            else:
-                nr[cat_col] = 'العطور'
+            cv = safe(base_r.get(cat_col, ''))
+            if cv:
+                category = clean_category(cv)
 
-        if img_col:
-            img = safe(t.get('image_url', ''), '')
-            if not img and base_r is not None:
-                raw_img = safe(base_r.get(img_col, ''), '')
-                img = raw_img.split(',')[0].strip() if raw_img else ''
-            nr[img_col] = img
+        rows.append({
+            'النوع ': 'منتج',
+            'أسم المنتج': safe(t.get('name', '')),
+            'تصنيف المنتج': category,
+            'صورة المنتج': img,
+            'نوع المنتج': 'منتج جاهز',
+            'سعر المنتج': float(t.get('new_price', 0) or 0),
+            'الوصف': safe(t.get('new_description', '')),
+            'هل يتطلب شحن؟': 'نعم',
+            'رمز المنتج sku': safe(t.get('sku', '')),
+            'اقصي كمية لكل عميل': 0,
+            'إخفاء خيار تحديد الكمية': 'لا',
+            'الوزن': 1,
+            'وحدة الوزن': 'kg',
+            'الماركة': brand_name,
+            'العنوان الترويجي': safe(t.get('seo_title', '')),
+            'خاضع للضريبة ؟': 'نعم',
+        })
 
-        nr = fill_mandatory(nr)
-        rows.append(pd.Series(nr))
-
+    # 2) المنتجات الناقصة
     for m in result.get('missing_products', []):
-        nr = {c: '' for c in all_cols}
+        # دمج الصورتين (لو وُجدتا) بفاصلة
+        img1 = safe(m.get('image_url_1', ''))
+        img2 = safe(m.get('image_url_2', ''))
+        images = ','.join(u for u in [img1, img2] if u)
 
-        if name_col:  nr[name_col] = m.get('name', '')
-        if price_col: nr[price_col] = m.get('price', 0)
-        if desc_col:  nr[desc_col] = m.get('description', '')
-        if brand_col: nr[brand_col] = safe(m.get('brand', ''), brand_name)
+        category_raw = safe(m.get('category', ''))
+        category = clean_category(category_raw) if category_raw else default_category
 
-        # Always provide a category — Salla rejects empty/nan
-        cat_val = safe(m.get('category', ''), '')
-        if cat_col:
-            if cat_val:
-                nr[cat_col] = _clean_category(cat_val)
-            elif not original_df[cat_col].dropna().empty:
-                nr[cat_col] = _clean_category(original_df[cat_col].dropna().mode().iloc[0])
-            else:
-                nr[cat_col] = 'العطور'
+        rows.append({
+            'النوع ': 'منتج',
+            'أسم المنتج': safe(m.get('name', '')),
+            'تصنيف المنتج': category,
+            'صورة المنتج': images,
+            'نوع المنتج': 'منتج جاهز',
+            'سعر المنتج': float(m.get('price', 0) or 0),
+            'الوصف': safe(m.get('description', '')),
+            'هل يتطلب شحن؟': 'نعم',
+            'رمز المنتج sku': safe(m.get('sku', '')),
+            'اقصي كمية لكل عميل': 0,
+            'إخفاء خيار تحديد الكمية': 'لا',
+            'الوزن': 1,
+            'وحدة الوزن': 'kg',
+            'الماركة': safe(m.get('brand', ''), brand_name),
+            'العنوان الترويجي': safe(m.get('seo_title', '')),
+            'خاضع للضريبة ؟': 'نعم',
+        })
 
-        if img_col:
-            img1 = safe(m.get('image_url_1', ''), '')
-            img2 = safe(m.get('image_url_2', ''), '')
-            imgs = [img1, img2]
-            nr[img_col] = ','.join(u for u in imgs if u)
+    # ─── تحويل لـ DataFrame وفرض ترتيب أعمدة سلة ────────────────────────────
+    df = pd.DataFrame(rows) if rows else pd.DataFrame()
 
-        nr = fill_mandatory(nr)
-        rows.append(pd.Series(nr))
+    # أضِف أي عمود مفقود من SALLA_COLUMNS كعمود فارغ
+    for col in SALLA_COLUMNS:
+        if col not in df.columns:
+            df[col] = ''
 
-    output_df = pd.DataFrame(rows) if rows else pd.DataFrame(columns=all_cols)
-    # Final NaN sweep — no 'nan' string can leak into Salla
-    output_df = output_df.fillna('')
-    output_df = output_df.replace({'nan': '', 'NaN': '', 'None': ''})
+    # اقطع على ترتيب SALLA_COLUMNS بالضبط (يُسقط أي عمود إضافي)
+    df = df[SALLA_COLUMNS]
 
-    wb = load_workbook(io.BytesIO(template_bytes))
+    # ─── تطبيق التنظيفات الإلزامية (Strict Salla Compliance) ────────────────
+    if not df.empty:
+        df['النوع '] = 'منتج'
+        df['نوع المنتج'] = 'منتج جاهز'
+        df['هل يتطلب شحن؟'] = 'نعم'
+        df['الوزن'] = 1
+        df['وحدة الوزن'] = 'kg'
+        df['إخفاء خيار تحديد الكمية'] = df['إخفاء خيار تحديد الكمية'].replace('', 'لا')
+        df['اقصي كمية لكل عميل'] = pd.to_numeric(
+            df['اقصي كمية لكل عميل'], errors='coerce'
+        ).fillna(0).astype(int)
+        df['خاضع للضريبة ؟'] = df['خاضع للضريبة ؟'].replace('', 'نعم')
 
-    active_title = wb.active.title
-    for sheet_name in list(wb.sheetnames):
-        if sheet_name != active_title:
-            wb.remove(wb[sheet_name])
+        # تنظيف شامل لكل أنواع الفراغات
+        df = df.replace({
+            pd.NA: '', None: '',
+            'nan': '', 'NaN': '', 'NAN': '',
+            'None': '', '<NA>': '', 'null': '', 'NULL': '',
+        })
+        df = df.fillna('')
 
+    # ─── بناء ملف Excel من الصفر بأسلوب قالب سلة ────────────────────────────
+    wb = Workbook()
     ws = wb.active
+    ws.title = 'Salla Products Template Sheet'
+    ws.sheet_view.rightToLeft = True  # RTL مطلوب لسلة
 
-    header_row = 2
-    for i, row in enumerate(ws.iter_rows(min_row=1, max_row=6, values_only=True), 1):
-        if any(cell and ('اسم' in str(cell) or cell == 'No.') for cell in row):
-            header_row = i
-            break
-    data_start = header_row + 1
+    n_cols = len(SALLA_COLUMNS)
 
-    template_headers = [
-        ws.cell(row=header_row, column=c).value
-        for c in range(1, ws.max_column + 1)
-    ]
+    # الصف 1: عنوان "بيانات المنتج" مدموج عبر كل الأعمدة
+    title_cell = ws.cell(row=1, column=1, value='بيانات المنتج')
+    title_cell.font = Font(bold=True, size=14)
+    title_cell.alignment = Alignment(horizontal='center', vertical='center')
+    title_cell.fill = PatternFill(start_color='D9E1F2', end_color='D9E1F2', fill_type='solid')
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=n_cols)
 
-    # Salla canonical header → semantic key. Used as fallback when df column
-    # names differ from template (e.g. df has 'فئة المنتج' but template wants 'تصنيف المنتج').
-    semantic_for_template = {
-        'تصنيف المنتج': 'category', 'فئة المنتج': 'category', 'فئة': 'category',
-        'اسم المنتج': 'name',
-        'سعر المنتج': 'price', 'السعر': 'price',
-        'الوصف': 'description',
-        'صورة المنتج': 'images',
-        'الماركة': 'brand',
-        'نوع المنتج': 'type_product',
-        'النوع': 'type_simple',
-        'الكمية': 'qty', 'الكمية المتوفرة': 'qty',
-        'أقصى كمية لكل عميل': 'max_qty',
-        'الوزن': 'weight',
-        'وحدة الوزن': 'weight_unit',
-        'هل يتطلب شحن؟': 'shipping', 'يتطلب شحن': 'shipping',
-    }
-    semantic_to_dfcol = {
-        'category': cat_col, 'name': name_col, 'price': price_col,
-        'description': desc_col, 'images': img_col, 'brand': brand_col,
-    }
+    # الصف 2: أسماء الأعمدة
+    header_font = Font(bold=True)
+    header_fill = PatternFill(start_color='F2F2F2', end_color='F2F2F2', fill_type='solid')
+    for ci, header in enumerate(SALLA_COLUMNS, start=1):
+        cell = ws.cell(row=2, column=ci, value=header)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
 
-    # Strict literal header match — image URLs cannot leak into 'وصف صورة المنتج'
-    col_map = {}
-    for t_idx, t_hdr in enumerate(template_headers):
-        if not t_hdr:
-            continue
-        t_str = str(t_hdr).strip()
-        matched = None
-        for df_col in output_df.columns:
-            if t_str == str(df_col).strip():
-                matched = df_col
-                break
-        # Fallback: semantic mapping (e.g. template 'تصنيف المنتج' ↔ df 'فئة المنتج')
-        if matched is None:
-            sem = semantic_for_template.get(t_str)
-            if sem and sem in semantic_to_dfcol and semantic_to_dfcol[sem] in output_df.columns:
-                matched = semantic_to_dfcol[sem]
-        if matched is not None:
-            col_map[t_idx + 1] = matched
+    # الصف 3+: بيانات المنتجات
+    for ri, (_, row) in enumerate(df.iterrows(), start=3):
+        for ci, col in enumerate(SALLA_COLUMNS, start=1):
+            value = row[col]
+            # ضمان نهائي: لا 'nan' كنص
+            if isinstance(value, str) and value.lower() in ('nan', 'none', '<na>'):
+                value = ''
+            ws.cell(row=ri, column=ci, value=value)
 
-    # Mandatory Salla headers that may not exist in original_df — write directly to template columns
-    direct_template_values = {}
-    for t_idx, t_hdr in enumerate(template_headers):
-        if not t_hdr:
-            continue
-        cs = str(t_hdr).strip()
-        ns = _norm_hdr(cs)
-        if t_idx + 1 in col_map:
-            continue  # already mapped from df
-        if 'نوع المنتج' in cs:
-            direct_template_values[t_idx + 1] = 'منتج جاهز'
-        elif cs == 'النوع':
-            direct_template_values[t_idx + 1] = 'منتج'
-        elif 'يتطلب شحن' in cs:
-            direct_template_values[t_idx + 1] = 'نعم'
-        elif 'اقصي كميه' in ns or 'اقصى كميه' in ns:
-            direct_template_values[t_idx + 1] = 2
-        elif 'الكمية' in cs or 'الكميه' in ns:
-            direct_template_values[t_idx + 1] = 10
-        elif cs == 'الوزن':
-            direct_template_values[t_idx + 1] = 1
-        elif 'وحدة الوزن' in cs or 'وحده الوزن' in ns:
-            direct_template_values[t_idx + 1] = 'kg'
-        elif 'إخفاء خيار' in cs or 'اخفاء خيار' in ns:
-            direct_template_values[t_idx + 1] = 'لا'
-        elif 'الماركة' in cs:
-            direct_template_values[t_idx + 1] = brand_name
+    # عرض أعمدة معقول
+    for ci in range(1, n_cols + 1):
+        ws.column_dimensions[get_column_letter(ci)].width = 22
 
-    last_written = data_start - 1
-    for r_idx, (_, row) in enumerate(output_df.iterrows()):
-        excel_row = data_start + r_idx
-        last_written = excel_row
-        for t_col, df_col in col_map.items():
-            val = row.get(df_col, '')
-            try:
-                if pd.isna(val):
-                    val = ''
-            except (TypeError, ValueError):
-                pass
-            if isinstance(val, str) and val.lower() == 'nan':
-                val = ''
-            ws.cell(row=excel_row, column=t_col, value=val)
-        for t_col, val in direct_template_values.items():
-            ws.cell(row=excel_row, column=t_col, value=val)
+    # تجميد الصفين الأولين
+    ws.freeze_panes = 'A3'
 
-    # Wipe any leftover template demo rows below our data (e.g. the 'زارا/ملابس' sample row)
-    # Force-wipe well past max_row — openpyxl misses formatted-only rows (e.g. Salla's 'زارا/ملابس' demo row)
-    WIPE_UNTIL = max(ws.max_row + 1, last_written + 200)
-    for r in range(last_written + 1, WIPE_UNTIL):
-        for c in range(1, ws.max_column + 1):
-            ws.cell(row=r, column=c, value=None)
-
+    # ─── حفظ في buffer ──────────────────────────────────────────────────────
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
