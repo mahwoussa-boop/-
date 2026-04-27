@@ -1,4 +1,4 @@
-text = re.sub(r'\n?\s*```\s*$',         '', text, flags=re.MULTILINE)
+text = re.sub(r'\n?\s*```\s*$', '', text, flags=re.MULTILINE)
     text = text.strip()
 
     start = text.find('{')
