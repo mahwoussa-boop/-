@@ -171,6 +171,12 @@ SYSTEM_INSTRUCTION_TEMPLATE = """## هويتك ومهمتك
   - إذا لم تجد → اجعل `competitor_price = 0`، `tester_available_in_market = false`، و `source_store = ""`.
   - في كل الحالات، `new_price` يُحسب بقاعدة التسعير الداخلية (موضحة أدناه) وليس بسعر المنافس.
 
+**القاعدة 2ب — تسمية التستر (إلزامي):**
+- الصيغة الصحيحة دائماً: **"تستر " + بقية اسم العطر** (تستر في البداية وليس في النهاية)
+- إذا بدأ اسم العطر بـ "عطر " → استبدلها بـ "تستر " مثال: "عطر باكو رابان 1 مليون" → "تستر باكو رابان 1 مليون"
+- إذا بدأ باسم الماركة مباشرة → أضف "تستر " في البداية مثال: "باكو رابان فانتوم 100مل" → "تستر باكو رابان فانتوم 100مل"
+- ممنوع وضع كلمة تستر في النهاية أبداً
+
 **القاعدة 3 — صورة التستر:**
 - الصورة تُؤخذ حرفياً من حقل image_url للمنتج الأساسي الموجود في قائمتنا
 - لا تبحث عن صورة جديدة للتستر أبداً
@@ -182,9 +188,10 @@ SYSTEM_INSTRUCTION_TEMPLATE = """## هويتك ومهمتك
 - إذا لم يوجد → أضفه في missing_products مع وصفه كعطر أساسي جديد، واذكر التستر اليتيم في orphan_testers.
 
 ## قواعد المنتجات الناقصة
-- قارن قائمتنا الكاملة بما يبيعه المنافسون لنفس الماركة
-- ركّز على: الأكثر مبيعاً، الإصدارات الجديدة، والأحجام المختلفة الشائعة
-- كل مقترح يجب أن يكون متوفراً للشراء الآن في متجر محدد (اذكر المتجر)
+- قارن قائمتنا الكاملة بما يبيعه المنافسون فعلياً لنفس الماركة في السوق السعودي
+- ركّز على: الأكثر مبيعاً، الإصدارات الجديدة 2024/2025/2026، والأحجام الشائعة
+- كل مقترح **يجب** أن يكون متوفراً فعلياً للشراء الآن في متجر سعودي محدد — اذكر اسم المتجر ورابط المنتج في source_store
+- لا تقترح منتجات غير موجودة فعلياً في السوق السعودي
 - الأولوية للمنتجات الأكثر مبيعاً (bestsellers)
 
 ## أسلوب الكتابة — تعلّم من هذه الأمثلة الحقيقية
@@ -797,9 +804,26 @@ def ensure_all_testers_added(result: dict, products_payload: list) -> dict:
         tester_price = calc_tester_price(bp_price)
         size_ml = _extract_size_ml(bp_name) or 100
 
+        # ── بناء اسم التستر الصحيح: "تستر [اسم العطر]" ──────────────────────
+        # القاعدة 1: إذا بدأ الاسم بـ "عطر " → استبدلها بـ "تستر "
+        # القاعدة 2: إذا انتهى الاسم بـ " تستر" → نقلها للبداية
+        # القاعدة 3: إذا احتوى الاسم على كلمة تستر في مكان ما → أعد تنسيقه
+        # القاعدة 4: غير ذلك → أضف "تستر " في البداية
+        _bp = bp_name.strip()
+        if re.match(r'^عطر\s+', _bp):
+            tester_name = 'تستر ' + re.sub(r'^عطر\s+', '', _bp)
+        elif re.search(r'\s+تستر\s*$', _bp, re.IGNORECASE):
+            tester_name = 'تستر ' + re.sub(r'\s+تستر\s*$', '', _bp, flags=re.IGNORECASE).strip()
+        elif _TESTER_STRIP_RX.search(_bp):
+            cleaned_bp = _TESTER_STRIP_RX.sub(' ', _bp).strip()
+            tester_name = 'تستر ' + re.sub(r'\s+', ' ', cleaned_bp)
+        else:
+            tester_name = 'تستر ' + _bp
+        # ─────────────────────────────────────────────────────────────────────
+
         auto_tester = {
             'base_product_id': bp_id,
-            'name': f"{bp_name} تستر",
+            'name': tester_name,
             'size_ml': size_ml,
             'original_price': bp_price,
             'new_price': tester_price,
@@ -928,7 +952,7 @@ def call_gemini_brand(
    - إذا لا → تابع الخطوة 2 (إلزامي):
 
 2. ابحث في المتاجر السعودية للحصول على **سعر مرجعي** للتستر، ثم **أضف التستر دائماً** في `testers_to_add` مع:
-     * `name`: اسم العطر + " تستر"
+     * `name`: **"تستر " + اسم العطر** (الصيغة الصحيحة: تستر في البداية وليس في النهاية) — إذا بدأ الاسم بـ "عطر " فاستبدلها بـ "تستر " — مثال: "تستر باكو رابان 1 مليون أو دو تواليت 200مل"
      * `size_ml`: نفس حجم العطر الأساسي ما لم يُذكر حجم تستر مختلف عند منافس
      * `base_product_id`: id العطر الأساسي من قائمتنا (إلزامي ودقيق)
      * `image_url`: انسخه حرفياً من حقل image_url للعطر الأساسي (الصورة الأولى فقط) — لا تبحث عن صورة جديدة
@@ -988,7 +1012,7 @@ def call_gemini_brand(
   "testers_to_add": [
     {{
       "base_product_id": "id من قائمتنا",
-      "name": "اسم العطر تستر",
+      "name": "تستر اسم العطر",  // تستر دائماً في البداية
       "size_ml": 100,
       "original_price": 0,
       "new_price": 0,
@@ -1138,7 +1162,7 @@ SALLA_MANDATORY = {
     'يتطلب شحن':          'نعم',
     'الكمية':             10,
     'الكمية المتوفرة':    10,
-    'أقصى كمية لكل عميل': 2,
+    'أقصى كمية لكل عميل': 1,  # ✅ إصلاح: 1 وليس 2
     'الوزن':              1,
     'وحدة الوزن':         'kg',
     'إخفاء خيار التوصيل': 'لا',
@@ -1209,8 +1233,8 @@ def build_output_excel(result: dict, original_df: pd.DataFrame, template_bytes: 
                 nr[c] = 'منتج'
             elif 'يتطلب شحن' in cs:
                 nr[c] = 'نعم'
-            elif 'اقصي كميه' in ns or 'اقصى كميه' in ns:
-                nr[c] = 2
+            elif 'اقصي كميه' in ns or 'اقصى كميه' in ns or 'اقصي كمية' in ns or 'اقصى كمية' in ns:
+                nr[c] = 1  # ✅ إصلاح: 1 وليس 2
             elif ('الكمية' in cs or 'الكميه' in ns) and 'اقصي' not in ns and 'اقصى' not in ns:
                 nr[c] = 10
             elif cs == 'الوزن':
@@ -1218,7 +1242,7 @@ def build_output_excel(result: dict, original_df: pd.DataFrame, template_bytes: 
             elif 'وحدة الوزن' in cs or 'وحده الوزن' in ns:
                 nr[c] = 'kg'
             elif 'إخفاء خيار' in cs or 'اخفاء خيار' in ns:
-                nr[c] = 'لا'
+                nr[c] = 'نعم'  # ✅ إصلاح: 'نعم' وليس 'لا'
             elif 'الماركة' in cs and brand_col and c == brand_col:
                 nr[c] = brand_name
         return nr
@@ -1368,8 +1392,8 @@ def build_output_excel(result: dict, original_df: pd.DataFrame, template_bytes: 
             direct_template_values[t_idx + 1] = 'منتج'
         elif 'يتطلب شحن' in cs:
             direct_template_values[t_idx + 1] = 'نعم'
-        elif 'اقصي كميه' in ns or 'اقصى كميه' in ns:
-            direct_template_values[t_idx + 1] = 2
+        elif 'اقصي كميه' in ns or 'اقصى كميه' in ns or 'اقصي كمية' in ns or 'اقصى كمية' in ns:
+            direct_template_values[t_idx + 1] = 1  # ✅ إصلاح: 1 وليس 2 (الحد الأدنى المقبول في سلة)
         elif ('الكمية' in cs or 'الكميه' in ns) and 'اقصي' not in ns:
             direct_template_values[t_idx + 1] = 10
         elif cs == 'الوزن':
@@ -1377,7 +1401,7 @@ def build_output_excel(result: dict, original_df: pd.DataFrame, template_bytes: 
         elif 'وحدة الوزن' in cs or 'وحده الوزن' in ns:
             direct_template_values[t_idx + 1] = 'kg'
         elif 'إخفاء خيار' in cs or 'اخفاء خيار' in ns:
-            direct_template_values[t_idx + 1] = 'لا'
+            direct_template_values[t_idx + 1] = 'نعم'  # ✅ إصلاح: 'نعم' وليس 'لا' — سلة تقبل فقط 'نعم' أو فارغ
         elif 'الماركة' in cs:
             direct_template_values[t_idx + 1] = brand_name
 
