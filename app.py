@@ -697,20 +697,35 @@ def filter_duplicates(result: dict, existing_products: list,
 #  ⭐ شبكة الأمان: ضمان وجود تستر لكل عطر أساسي بدون تستر
 # ═════════════════════════════════════════════════════════════════════════════
 
-# regex لإزالة كلمات التستر من الأسماء قبل التطبيع
-_TESTER_STRIP_RX = re.compile(
-    r'\b(?:tester|testr|test)\b|تستر|تيستر|تستير',
+# regex لإزالة كلمات «الضوضاء» من الأسماء قبل التطبيع.
+# ضرورية لأن `_normalize_perfume_name` يفحص `_JUNK_WORDS` *بعد* التحويل
+# للحروف اللاتينية، لكن قائمة الكلمات تحتوي الأصل العربي — فلا يتطابق.
+# نُزيلها هنا قبل التطبيع لتفادي اختلاف الهياكل بسبب كلمات حشو مثل
+# "عطر" و "تستر" و "للرجال" إلخ.
+_NOISE_STRIP_RX = re.compile(
+    r'\b(?:tester|testr|test)\b'
+    r'|تستر|تيستر|تستير'
+    r'|العطر|عطر'
+    r'|الرجالي|الرجالى|للرجال|رجالي|رجالى'
+    r'|النسائي|النسائى|للنساء|نسائي|نسائى'
+    r'|للجنسين|unisex'
+    r'|الاصلي|الأصلي|اصلي|أصلي|original|authentic',
     re.IGNORECASE,
 )
 
+# alias للتوافق الخلفي
+_TESTER_STRIP_RX = _NOISE_STRIP_RX
+
 
 def _strip_tester_keyword(name: str) -> str:
-    """يُزيل كلمات التستر (عربي/إنجليزي) من الاسم — ضرورية قبل التطبيع لأن
-    `_normalize_perfume_name` تُحوّل 'تستر' إلى 'tstr' وهي ليست في _JUNK_WORDS.
+    """يُزيل كلمات الحشو الشائعة (تستر/عطر/للرجال/الأصلي…) من الاسم قبل
+    التطبيع. مهم جداً لأن `_normalize_perfume_name` لا يستطيع إزالة هذه
+    الكلمات العربية بنفسه (لأنه يفحص قائمة `_JUNK_WORDS` بعد تحويل الأحرف
+    إلى لاتينية، فلا يتطابق الأصل العربي).
     """
     if not name:
         return ''
-    return _TESTER_STRIP_RX.sub(' ', str(name))
+    return _NOISE_STRIP_RX.sub(' ', str(name))
 
 
 def ensure_all_testers_added(result: dict, products_payload: list) -> dict:
@@ -776,7 +791,7 @@ def ensure_all_testers_added(result: dict, products_payload: list) -> dict:
         if not bp_name:
             continue
 
-        bp_sk = _normalize_perfume_name(bp_name)
+        bp_sk = _normalize_perfume_name(_strip_tester_keyword(bp_name))
         try:
             bp_price = float(bp.get('price', 0) or 0)
         except (TypeError, ValueError):
@@ -1294,7 +1309,14 @@ def build_output_excel(result: dict, original_df: pd.DataFrame, template_bytes: 
     output_df = output_df.fillna('')
     for null_token in _NULL_LIKE:
         output_df = output_df.replace(null_token, '')
-    output_df = output_df.applymap(_clean_cell)
+    # pandas ≥ 2.1 أزال DataFrame.applymap لصالح DataFrame.map
+    if hasattr(output_df, 'map') and callable(getattr(pd.DataFrame, 'map', None)):
+        try:
+            output_df = output_df.map(_clean_cell)
+        except (TypeError, AttributeError):
+            output_df = output_df.applymap(_clean_cell)
+    else:
+        output_df = output_df.applymap(_clean_cell)
 
     wb = load_workbook(io.BytesIO(template_bytes))
 
