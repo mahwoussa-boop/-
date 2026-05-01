@@ -331,6 +331,49 @@ def calc_tester_price(original_price: float) -> float:
     return max(p - 70, 0)
 
 
+def build_tester_name(base_name: str) -> str:
+    """يُنشئ اسم تستر صحيح من اسم العطر الأساسي.
+
+    قواعد التسمية المعتمدة:
+      • إذا بدأ الاسم بـ «عطر » فإن «عطر» تُستبدل بـ «تستر»
+      • وإلا تُوضع «تستر » في أول الاسم (وليس آخره)
+
+    أمثلة:
+      'عطر رابان مليون 90مل'  →  'تستر رابان مليون 90مل'
+      'باكو رابان فانتوم 100مل' → 'تستر باكو رابان فانتوم 100مل'
+
+    كما تُزيل أي ذيول تستر مكرّرة قد تكون مُلصقة من قبل.
+    """
+    if not base_name or not str(base_name).strip():
+        return 'تستر'
+
+    name = str(base_name).strip()
+
+    # 1) إن كانت الكلمة «تستر/تيستر/تستير/Tester» مُلصقة في النهاية، احذفها
+    name = re.sub(
+        r'\s*(?:تستر|تيستر|تستير|tester|testr)\s*$',
+        '',
+        name,
+        flags=re.IGNORECASE,
+    ).strip()
+
+    # إن لم يبقَ شيء (الاسم كان «تستر» وحدها)، أرجِعها
+    if not name:
+        return 'تستر'
+
+    # 2) لو بدأ الاسم بـ «عطر »، استبدلها بـ «تستر»
+    if re.match(r'^(?:عطر|العطر)\s+', name):
+        return re.sub(r'^(?:عطر|العطر)\s+', 'تستر ', name, count=1)
+
+    # 3) لو بدأ الاسم بـ «تستر » مسبقاً، رجّع الاسم كما هو
+    if re.match(r'^(?:تستر|تيستر|تستير|tester|testr)\s+', name, re.IGNORECASE):
+        return name
+
+    # 4) خلاف ذلك، ضع «تستر » في الأول
+    return f"تستر {name}"
+    return max(p - 70, 0)
+
+
 def load_products(file) -> pd.DataFrame:
     name = file.name.lower()
     if name.endswith('.csv'):
@@ -637,6 +680,13 @@ def filter_duplicates(result: dict, existing_products: list,
             t.setdefault('tester_available_in_market', False)
             t.setdefault('source_store', '')
 
+            # وحّد صيغة الاسم: «تستر» في البداية وليس النهاية
+            # (Gemini أحياناً تُلصقها في النهاية بصيغة خاطئة لسلة)
+            if nm:
+                normalized_name = build_tester_name(nm)
+                if normalized_name != nm:
+                    t['name'] = normalized_name
+
             if base_id:
                 seen_base_ids.add(base_id)
             seen_keys.append((sk, sz))
@@ -814,7 +864,7 @@ def ensure_all_testers_added(result: dict, products_payload: list) -> dict:
 
         auto_tester = {
             'base_product_id': bp_id,
-            'name': f"{bp_name} تستر",
+            'name': build_tester_name(bp_name),
             'size_ml': size_ml,
             'original_price': bp_price,
             'new_price': tester_price,
@@ -823,7 +873,7 @@ def ensure_all_testers_added(result: dict, products_payload: list) -> dict:
             'source_store': '',
             'tester_available_in_market': False,
             'new_description': HTML_TEMPLATE_TESTER,
-            'seo_title': (f"تستر {bp_name}")[:60],
+            'seo_title': build_tester_name(bp_name)[:60],
             'seo_description': (
                 f"تستر {bp_name} أصلي 100% — نفس السائل والثبات والفوحان "
                 f"للإصدار المغلف بسعر استثنائي."
@@ -1189,7 +1239,15 @@ def _norm_hdr(s) -> str:
 
 
 def build_output_excel(result: dict, original_df: pd.DataFrame, template_bytes: bytes) -> bytes:
-    """يبني ملف Excel متوافقاً 100% مع قالب سلة."""
+    """يبني ملف Excel متوافقاً 100% مع قالب سلة.
+
+    يحتوي **فقط** على:
+      • testers_to_add  → التساتر الجديدة المُقترحة (من Gemini أو شبكة الأمان)
+      • missing_products → المنتجات الناقصة (موجودة عند المنافسين، غير موجودة لديك)
+
+    لا يحتوي على:
+      • products_updated → المنتجات الحالية في متجرك (لا تُكرّر إضافتها)
+    """
     brand_col = get_brand_col(original_df)
     name_col  = find_col(original_df, 'name')
     price_col = find_col(original_df, 'price')
@@ -1199,6 +1257,16 @@ def build_output_excel(result: dict, original_df: pd.DataFrame, template_bytes: 
 
     brand_name = result.get('brand', '')
     all_cols = list(original_df.columns)
+
+    # 🛡️ مرشّح دفاعي: هياكل أسماء كل المنتجات الموجودة فعلاً في القائمة الأصلية
+    # (سواء كانت عطور أساسية أو تساتر). نُسقط أي صف من المخرجات يطابق هياكل
+    # موجودة، حتى لو فات ذلك على Gemini أو filter_duplicates.
+    existing_skeletons: set = set()
+    if name_col and name_col in original_df.columns:
+        for raw in original_df[name_col].dropna().astype(str):
+            sk = _normalize_perfume_name(_strip_tester_keyword(raw))
+            if sk:
+                existing_skeletons.add(sk)
 
     def get_safe_row(base_id):
         if not base_id or 'No.' not in original_df.columns:
@@ -1224,6 +1292,10 @@ def build_output_excel(result: dict, original_df: pd.DataFrame, template_bytes: 
                 nr[c] = 'منتج'
             elif 'يتطلب شحن' in cs:
                 nr[c] = 'نعم'
+            # ⚠️ مهم: «إخفاء خيار تحديد الكمية» يحتوي كلمة «الكمية» — لذا يجب
+            # فحصه قبل قاعدة الكمية حتى لا يأخذ القيمة 10 ويرفضه سلة.
+            elif 'إخفاء خيار' in cs or 'اخفاء خيار' in ns:
+                nr[c] = 'لا'
             elif 'اقصي كميه' in ns or 'اقصى كميه' in ns:
                 nr[c] = 2
             elif ('الكمية' in cs or 'الكميه' in ns) and 'اقصي' not in ns and 'اقصى' not in ns:
@@ -1232,8 +1304,6 @@ def build_output_excel(result: dict, original_df: pd.DataFrame, template_bytes: 
                 nr[c] = 1
             elif 'وحدة الوزن' in cs or 'وحده الوزن' in ns:
                 nr[c] = 'kg'
-            elif 'إخفاء خيار' in cs or 'اخفاء خيار' in ns:
-                nr[c] = 'لا'
             elif 'الماركة' in cs and brand_col and c == brand_col:
                 nr[c] = brand_name
         return nr
@@ -1248,8 +1318,28 @@ def build_output_excel(result: dict, original_df: pd.DataFrame, template_bytes: 
         return hierarchical[0] if hierarchical else max(parts, key=len)
 
     rows = []
+    skipped_existing = 0  # عدّاد للصفوف التي أُسقطت لأنها موجودة فعلاً
 
     for t in result.get('testers_to_add', []):
+        # 🛡️ حماية نهائية: تخطّ التساتر التي تطابق منتجاً موجوداً (Gemini ربما
+        # اقترحت تستراً لمنتج له تستر مماثل في القائمة الأصلية).
+        t_name = str(t.get('name', '') or '')
+        t_sk = _normalize_perfume_name(_strip_tester_keyword(t_name))
+        if t_sk and t_sk in existing_skeletons:
+            # نتخطى فقط إذا كان التستر *الأصلي* موجوداً — لا نريد أن نفقد
+            # التساتر الجديدة لعطور موجودة بدون تساتر. لذا نتحقق أن المنتج
+            # الموجود فعلاً تستر، وليس عطراً أساسياً.
+            existing_is_tester = False
+            if name_col and name_col in original_df.columns:
+                for raw in original_df[name_col].dropna().astype(str):
+                    raw_sk = _normalize_perfume_name(_strip_tester_keyword(raw))
+                    if raw_sk == t_sk and is_tester(raw):
+                        existing_is_tester = True
+                        break
+            if existing_is_tester:
+                skipped_existing += 1
+                continue
+
         nr = {c: '' for c in all_cols}
         base_r = get_safe_row(t.get('base_product_id'))
 
@@ -1280,6 +1370,13 @@ def build_output_excel(result: dict, original_df: pd.DataFrame, template_bytes: 
         rows.append(pd.Series(nr))
 
     for m in result.get('missing_products', []):
+        # 🛡️ حماية نهائية: تخطّ المنتجات الناقصة المطابقة لمنتج موجود فعلاً.
+        m_name = str(m.get('name', '') or '')
+        m_sk = _normalize_perfume_name(_strip_tester_keyword(m_name))
+        if m_sk and m_sk in existing_skeletons:
+            skipped_existing += 1
+            continue
+
         nr = {c: '' for c in all_cols}
 
         if name_col:  nr[name_col]  = _clean_cell(m.get('name', ''))
@@ -1390,16 +1487,18 @@ def build_output_excel(result: dict, original_df: pd.DataFrame, template_bytes: 
             direct_template_values[t_idx + 1] = 'منتج'
         elif 'يتطلب شحن' in cs:
             direct_template_values[t_idx + 1] = 'نعم'
+        # ⚠️ مهم: «إخفاء خيار تحديد الكمية» يحتوي كلمة «الكمية» — لذا يجب
+        # فحصه قبل قاعدة الكمية حتى لا يأخذ القيمة 10 ويرفضه سلة.
+        elif 'إخفاء خيار' in cs or 'اخفاء خيار' in ns:
+            direct_template_values[t_idx + 1] = 'لا'
         elif 'اقصي كميه' in ns or 'اقصى كميه' in ns:
             direct_template_values[t_idx + 1] = 2
-        elif ('الكمية' in cs or 'الكميه' in ns) and 'اقصي' not in ns:
+        elif ('الكمية' in cs or 'الكميه' in ns) and 'اقصي' not in ns and 'اقصى' not in ns:
             direct_template_values[t_idx + 1] = 10
         elif cs == 'الوزن':
             direct_template_values[t_idx + 1] = 1
         elif 'وحدة الوزن' in cs or 'وحده الوزن' in ns:
             direct_template_values[t_idx + 1] = 'kg'
-        elif 'إخفاء خيار' in cs or 'اخفاء خيار' in ns:
-            direct_template_values[t_idx + 1] = 'لا'
         elif 'الماركة' in cs:
             direct_template_values[t_idx + 1] = brand_name
 
