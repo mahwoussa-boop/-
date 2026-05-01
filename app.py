@@ -65,81 +65,125 @@ COMPETITOR_STORES = [
 ]
 
 # ─── HTML TEMPLATES ──────────────────────────────────────────────────────────
-HTML_TEMPLATE_NEW = """<p><strong>[مقدمة تسويقية جذابة]</strong></p>
-<h3>التفاصيل والخطوط العطرية باختصار</h3>
-<ul>
-  <li><strong>الماركة:</strong> [اسم الماركة]</li>
-  <li><strong>اسم العطر:</strong> [اسم العطر]</li>
-  <li><strong>الجنس:</strong> [رجالي / نسائي / للجنسين]</li>
-  <li><strong>الخط العطري (العائلة):</strong> [مثل: حمضي - أروماتك]</li>
-  <li><strong>الحجم:</strong> [الحجم مل]</li>
-  <li><strong>التركيز:</strong> [مثل: أودي بارفيوم]</li>
-  <li><strong>سنة الإصدار:</strong> [السنة والتوقيع إن وجد]</li>
-</ul>
-<h3>رحلة العطر (النوتات)</h3>
-<ul>
-  <li><strong>الافتتاحية:</strong> [وصف]</li>
-  <li><strong>القلب العطري:</strong> [وصف]</li>
-  <li><strong>القاعدة الأساسية:</strong> [وصف]</li>
-</ul>
-<h3>لماذا تختار هذا العطر؟</h3>
-<ul>
-  <li><strong>رائحة متوازنة:</strong> [وصف]</li>
-  <li><strong>مثالي لجميع الأوقات:</strong> [وصف]</li>
-  <li><strong>أداء قوي:</strong> [وصف]</li>
-</ul>
-<h3>الأسئلة الشائعة</h3>
-<p><strong>هل هذا العطر مناسب للمناخ الحار؟</strong><br>[إجابة]</p>
-<p><strong>هل يمكن استخدامه يومياً؟</strong><br>[إجابة]</p>
-<p><strong>ما هي المناسبة الأفضل لاستخدامه؟</strong><br>[إجابة]</p>
-<h3>اكتشف المزيد من مهووس</h3>
-<ul>
-  <li><a href="#">استكشف أحدث العطور الرجالية هنا</a></li>
-  <li><a href="#">تصفح أجمل العطور النسائية الجذابة</a></li>
-  <li><a href="#">للباحثين عن التميز، استكشف عطور النيش الفاخرة</a></li>
-</ul>"""
+HTML_TEMPLATE_NEW = (
+    '<p><strong>[مقدمة تسويقية جذابة]</strong></p>'
+    '<h3>التفاصيل والخطوط العطرية باختصار</h3>'
+    '<ul>'
+      '<li><strong>الماركة:</strong> [اسم الماركة]</li>'
+      '<li><strong>اسم العطر:</strong> [اسم العطر]</li>'
+      '<li><strong>الجنس:</strong> [رجالي / نسائي / للجنسين]</li>'
+      '<li><strong>الخط العطري (العائلة):</strong> [مثل: حمضي - أروماتك]</li>'
+      '<li><strong>الحجم:</strong> [الحجم مل]</li>'
+      '<li><strong>التركيز:</strong> [مثل: أودي بارفيوم]</li>'
+      '<li><strong>سنة الإصدار:</strong> [السنة والتوقيع إن وجد]</li>'
+    '</ul>'
+    '<h3>رحلة العطر (النوتات)</h3>'
+    '<ul>'
+      '<li><strong>الافتتاحية:</strong> [وصف]</li>'
+      '<li><strong>القلب العطري:</strong> [وصف]</li>'
+      '<li><strong>القاعدة الأساسية:</strong> [وصف]</li>'
+    '</ul>'
+    '<h3>لماذا تختار هذا العطر؟</h3>'
+    '<ul>'
+      '<li><strong>رائحة متوازنة:</strong> [وصف]</li>'
+      '<li><strong>مثالي لجميع الأوقات:</strong> [وصف]</li>'
+      '<li><strong>أداء قوي:</strong> [وصف]</li>'
+    '</ul>'
+    '<h3>الأسئلة الشائعة</h3>'
+    '<p><strong>هل هذا العطر مناسب للمناخ الحار؟</strong><br>[إجابة]</p>'
+    '<p><strong>هل يمكن استخدامه يومياً؟</strong><br>[إجابة]</p>'
+    '<p><strong>ما هي المناسبة الأفضل لاستخدامه؟</strong><br>[إجابة]</p>'
+    '<h3>اكتشف المزيد من مهووس</h3>'
+    '<ul>'
+      '<li><a href="/categories/perfumes-men">استكشف أحدث العطور الرجالية</a></li>'
+      '<li><a href="/categories/perfumes-women">تصفح أجمل العطور النسائية الجذابة</a></li>'
+      '<li><a href="/categories/niche-perfumes">للباحثين عن التميز، استكشف عطور النيش الفاخرة</a></li>'
+    '</ul>'
+)
 
-HTML_TEMPLATE_TESTER = """<p><strong>استمتع بالفخامة المطلقة بتكلفة أذكى! نقدم لك تستر "[اسم العطر]" من [الماركة] الأصلي 100%، ليمنحك نفس التجربة، الثبات، والفوحان للإصدار المغلف ولكن بسعر استثنائي. [مقدمة عن العطر].</strong></p>
-<h3>التفاصيل والخطوط باختصار</h3>
-<ul>
-  <li><strong>الماركة:</strong> [اسم الماركة]</li>
-  <li><strong>الاسم:</strong> [اسم العطر]</li>
-  <li><strong>حالة المنتج:</strong> تستر (Tester) أصلي 100%.</li>
-  <li><strong>الجنس:</strong> [رجالي / نسائي / للجنسين]</li>
-  <li><strong>الخط (العائلة):</strong> [مثل: حمضي - أروماتك]</li>
-  <li><strong>الحجم:</strong> [الحجم مل]</li>
-  <li><strong>التركيز:</strong> [مثل: أودي بارفيوم]</li>
-</ul>
-<h3>رحلة النوتات</h3>
-<ul>
-  <li><strong>الافتتاحية:</strong> [وصف]</li>
-  <li><strong>القلب:</strong> [وصف]</li>
-  <li><strong>القاعدة الأساسية:</strong> [وصف]</li>
-</ul>
-<h3>لماذا تختار هذا الإصدار؟</h3>
-<ul>
-  <li><strong>رائحة متوازنة:</strong> [وصف]</li>
-  <li><strong>مثالي لجميع الأوقات:</strong> [وصف]</li>
-  <li><strong>أداء قوي:</strong> [وصف]</li>
-</ul>
-<h3>الدليل الشامل للتساتر من متجر مهووس</h3>
-<p>هل تتساءل عن سر التساتر ولماذا تحظى بشعبية هائلة بين عشاق الروائح الفاخرة؟ يسعدنا في متجر مهووس أن نكشف لك هذا السر، لنجعل تجربة تسوقك أكثر ذكاءً وثقة.</p>
-<p><strong>ما هو التستر؟</strong><br>التستر هو نسخة أصلية 100% تصدرها الشركة المصنعة (الماركات العالمية) جنباً إلى جنب مع المنتجات التجارية. الهدف الأساسي من إنتاجه هو وضعه في المتاجر والبوتيكات الفاخرة ليتمكن العملاء من تجربة الرائحة والأداء قبل الشراء.</p>
-<p><strong>ما الفرق بين التستر والإصدار العادي المغلف؟</strong><br>الفرق الوحيد والأساسي يكمن في "الشكل الخارجي" فقط، ولا مساومة أبداً على الجودة:</p>
-<ul>
-  <li><strong>السائل:</strong> متطابق 100% من حيث المكونات، التركيز، الثبات، والفوحان. أنت تحصل على نفس القطرة الأصلية تماماً.</li>
-  <li><strong>الزجاجة:</strong> يأتي في نفس الزجاجة الأصلية الفاخرة للماركة، وقد يُطبع عليها أحياناً عبارة (Tester) أو (Demonstration).</li>
-  <li><strong>العلبة الخارجية:</strong> بهدف تقليل التكاليف، تُصدر الشركات التساتر في علب كرتونية بسيطة (غالباً بيضاء أو بنية صديقة للبيئة)، وتأتي بدون الغلاف البلاستيكي الشفاف (السلوفان).</li>
-  <li><strong>الغطاء:</strong> تأتي معظم التساتر بغطائها الأصلي الفاخر، وفي حالات نادرة جداً قد تأتي بدون غطاء بناءً على تصميم الشركة المصنعة.</li>
-</ul>
-<p><strong>لماذا يعتبر التستر استثماراً ذكياً؟</strong><br>إذا كنت تشتري لاقتنائك الشخصي وليس لتقديمه كهدية رسمية، فإن التستر هو الخيار الأكثر ذكاءً وتوفيراً. فهو يتيح لك الاستمتاع بأرقى الروائح العالمية وإصدارات النيش بأسعار اقتصادية مخفضة جداً، لتحصل على أقصى قيمة مقابل ما تدفعه.</p>
-<p><strong>ضمان مهووس الذهبي</strong><br>نحن في متجر مهووس نضع ثقتك في المقام الأول. نضمن لك أصالة جميع التساتر المتوفرة لدينا بنسبة 100%. يتم توفيرها من نفس الموزعين المعتمدين للماركات العالمية، لتعيش تجربة الفخامة المطلقة براحة بال تامة.</p>
-<h3>اكتشف المزيد من مهووس</h3>
-<ul>
-  <li><a href="#">تصفح تشكيلتنا الواسعة من التساتر الأصلية</a></li>
-  <li><a href="#">تسوق المزيد من إصدارات النيش الرجالية الفاخرة</a></li>
-  <li><a href="#">اكتشف أحدث إصدارات النيش النسائية</a></li>
-</ul>"""
+HTML_TEMPLATE_TESTER = (
+    '<p><strong>استمتع بالفخامة المطلقة بتكلفة أذكى! نقدم لك تستر "[اسم العطر]" '
+    'من [الماركة] الأصلي 100%، ليمنحك نفس التجربة، الثبات، والفوحان للإصدار '
+    'المغلف ولكن بسعر استثنائي. [مقدمة عن العطر].</strong></p>'
+    '<h3>التفاصيل والخطوط باختصار</h3>'
+    '<ul>'
+      '<li><strong>الماركة:</strong> [اسم الماركة]</li>'
+      '<li><strong>الاسم:</strong> [اسم العطر]</li>'
+      '<li><strong>حالة المنتج:</strong> تستر (Tester) أصلي 100%.</li>'
+      '<li><strong>الجنس:</strong> [رجالي / نسائي / للجنسين]</li>'
+      '<li><strong>الخط (العائلة):</strong> [مثل: حمضي - أروماتك]</li>'
+      '<li><strong>الحجم:</strong> [الحجم مل]</li>'
+      '<li><strong>التركيز:</strong> [مثل: أودي بارفيوم]</li>'
+    '</ul>'
+    '<h3>رحلة النوتات</h3>'
+    '<ul>'
+      '<li><strong>الافتتاحية:</strong> [وصف]</li>'
+      '<li><strong>القلب:</strong> [وصف]</li>'
+      '<li><strong>القاعدة الأساسية:</strong> [وصف]</li>'
+    '</ul>'
+    '<h3>لماذا تختار هذا الإصدار؟</h3>'
+    '<ul>'
+      '<li><strong>رائحة متوازنة:</strong> [وصف]</li>'
+      '<li><strong>مثالي لجميع الأوقات:</strong> [وصف]</li>'
+      '<li><strong>أداء قوي:</strong> [وصف]</li>'
+    '</ul>'
+    '<h3>الدليل الشامل للتساتر من متجر مهووس</h3>'
+    '<p>هل تتساءل عن سر التساتر ولماذا تحظى بشعبية هائلة بين عشاق الروائح '
+    'الفاخرة؟ يسعدنا في متجر مهووس أن نكشف لك هذا السر، لنجعل تجربة تسوقك أكثر '
+    'ذكاءً وثقة.</p>'
+    '<p><strong>ما هو التستر؟</strong><br>التستر هو نسخة أصلية 100% تصدرها '
+    'الشركة المصنعة (الماركات العالمية) جنباً إلى جنب مع المنتجات التجارية. '
+    'الهدف الأساسي من إنتاجه هو وضعه في المتاجر والبوتيكات الفاخرة ليتمكن '
+    'العملاء من تجربة الرائحة والأداء قبل الشراء.</p>'
+    '<p><strong>ما الفرق بين التستر والإصدار العادي المغلف؟</strong><br>'
+    'الفرق الوحيد والأساسي يكمن في "الشكل الخارجي" فقط، ولا مساومة أبداً على '
+    'الجودة:</p>'
+    '<ul>'
+      '<li><strong>السائل:</strong> متطابق 100% من حيث المكونات، التركيز، '
+      'الثبات، والفوحان. أنت تحصل على نفس القطرة الأصلية تماماً.</li>'
+      '<li><strong>الزجاجة:</strong> يأتي في نفس الزجاجة الأصلية الفاخرة '
+      'للماركة، وقد يُطبع عليها أحياناً عبارة (Tester) أو (Demonstration).</li>'
+      '<li><strong>العلبة الخارجية:</strong> بهدف تقليل التكاليف، تُصدر '
+      'الشركات التساتر في علب كرتونية بسيطة (غالباً بيضاء أو بنية صديقة '
+      'للبيئة)، وتأتي بدون الغلاف البلاستيكي الشفاف (السلوفان).</li>'
+      '<li><strong>الغطاء:</strong> تأتي معظم التساتر بغطائها الأصلي الفاخر، '
+      'وفي حالات نادرة جداً قد تأتي بدون غطاء بناءً على تصميم الشركة '
+      'المصنعة.</li>'
+    '</ul>'
+    '<p><strong>لماذا يعتبر التستر استثماراً ذكياً؟</strong><br>إذا كنت '
+    'تشتري لاقتنائك الشخصي وليس لتقديمه كهدية رسمية، فإن التستر هو الخيار '
+    'الأكثر ذكاءً وتوفيراً. فهو يتيح لك الاستمتاع بأرقى الروائح العالمية '
+    'وإصدارات النيش بأسعار اقتصادية مخفضة جداً، لتحصل على أقصى قيمة مقابل ما '
+    'تدفعه.</p>'
+    '<p><strong>ضمان مهووس الذهبي</strong><br>نحن في متجر مهووس نضع ثقتك في '
+    'المقام الأول. نضمن لك أصالة جميع التساتر المتوفرة لدينا بنسبة 100%. يتم '
+    'توفيرها من نفس الموزعين المعتمدين للماركات العالمية، لتعيش تجربة الفخامة '
+    'المطلقة براحة بال تامة.</p>'
+    '<h3>اكتشف المزيد من مهووس</h3>'
+    '<ul>'
+      '<li><a href="/categories/testers">تصفح تشكيلتنا الواسعة من التساتر '
+      'الأصلية</a></li>'
+      '<li><a href="/categories/niche-perfumes-men">تسوق المزيد من إصدارات '
+      'النيش الرجالية الفاخرة</a></li>'
+      '<li><a href="/categories/niche-perfumes-women">اكتشف أحدث إصدارات '
+      'النيش النسائية</a></li>'
+    '</ul>'
+)
+
+
+def minify_html(html: str) -> str:
+    """يُزيل الفراغات الزائدة بين عناصر HTML لمنع ظهور أسطر فارغة في عرض سلة.
+
+    يحوّل: '<p>...</p>\n  <h3>...' إلى: '<p>...</p><h3>...'
+    """
+    if not html:
+        return ''
+    # احذف الفراغات بين الوسوم
+    cleaned = re.sub(r'>\s+<', '><', str(html).strip())
+    # احذف الأسطر الجديدة وعلامات Tab والمسافات المتعددة داخل النص
+    cleaned = re.sub(r'[\r\n\t]+', ' ', cleaned)
+    cleaned = re.sub(r'  +', ' ', cleaned)
+    return cleaned.strip()
 
 SYSTEM_INSTRUCTION_TEMPLATE = """## هويتك ومهمتك
 أنت **خبير عطور محترف بخبرة 20 سنة** + محلل تنافسي لمتجر مهووس في السوق السعودي.
@@ -153,9 +197,14 @@ SYSTEM_INSTRUCTION_TEMPLATE = """## هويتك ومهمتك
 - products_updated يجب أن يكون دائماً [] قائمة فارغة
 - لا تقترح منتجاً موجوداً مسبقاً ولو بصيغة مختلفة
 
-## قواعد التساتر (الأهم) — السياسة الجديدة: التستر إلزامي لكل عطر
+## قواعد التساتر (الأهم) — السياسة الجديدة: التستر إلزامي لكل عطر *مؤهل*
+
+**🛑 استثناءات مهمة (لا تُضِف تستراً لها أبداً):**
+1. **الأطقم/المجموعات**: أي منتج يحتوي اسمه على «طقم/أطقم/مجموعة/Set/Kit/Bundle/Collection/Box» أو «N قطع» (مثل: "3 قطع") أو رمز «+» الذي يدل على دمج عدة منتجات. مثال يجب تجاهله: "مجموعة باكو رابان مليون جولد للنساء 3 قطع".
+2. **الأحجام الصغيرة المكررة**: إذا كان نفس العطر موجوداً بأحجام متعددة (مثل 100مل و50مل لنفس الإصدار)، أضف تستراً **فقط للحجم الأكبر**. تجاهل الأحجام الأصغر تماماً.
+
 **القاعدة 1 — فحص وجود التستر:**
-- لكل عطر أساسي في قائمتنا، تحقق: هل يوجد منتج آخر في القائمة يحتوي اسمه على "تستر" أو "Tester" لنفس العطر؟
+- لكل عطر أساسي *مؤهل* في قائمتنا (ليس طقماً، وهو الحجم الأكبر لإصداره)، تحقق: هل يوجد منتج آخر في القائمة يحتوي اسمه على "تستر" أو "Tester" لنفس العطر؟
 - إذا وُجد التستر → **تخطّ، لا تقترح شيئاً**
 - إذا لم يُوجد → انتقل للقاعدة 2 (إلزامي).
 
@@ -166,17 +215,23 @@ SYSTEM_INSTRUCTION_TEMPLATE = """## هويتك ومهمتك
   3. "[اسم الماركة] tester site:sa"
 - ابحث في **أي** متجر سعودي يظهر في النتائج (سواء كان في القائمة المرجعية أم لا)
 - سجّل سعر المنافس في حقل `competitor_price` (للمرجعية فقط) واسم المتجر في `source_store`
-- 🔴 **سياسة إلزامية:** أضف التستر في `testers_to_add` **دائماً** لكل عطر أساسي ليس له تستر في قائمتنا، **حتى لو لم تجد التستر عند أي منافس سعودي**:
+- 🔴 **سياسة إلزامية:** أضف التستر في `testers_to_add` **دائماً** لكل عطر أساسي مؤهل ليس له تستر في قائمتنا، **حتى لو لم تجد التستر عند أي منافس سعودي**:
   - إذا وجدت سعر المنافس → ضعه في `competitor_price`، وضع `tester_available_in_market = true`، واسم المتجر في `source_store`.
   - إذا لم تجد → اجعل `competitor_price = 0`، `tester_available_in_market = false`، و `source_store = ""`.
   - في كل الحالات، `new_price` يُحسب بقاعدة التسعير الداخلية (موضحة أدناه) وليس بسعر المنافس.
 
-**القاعدة 3 — صورة التستر:**
+**القاعدة 3 — اسم التستر:**
+- يجب أن يبدأ اسم التستر بكلمة «تستر» (وليس في النهاية).
+- صيغة الاسم: `تستر [اسم العطر بدون كلمة "عطر" في أوله]`
+- مثال صحيح: «تستر باكو رابان فانتوم 100مل»
+- مثال خاطئ: «عطر باكو رابان فانتوم 100مل تستر»
+
+**القاعدة 4 — صورة التستر:**
 - الصورة تُؤخذ حرفياً من حقل image_url للمنتج الأساسي الموجود في قائمتنا
 - لا تبحث عن صورة جديدة للتستر أبداً
-- إذا كان للمنتج الأساسي أكثر من صورة (مفصولة بفاصلة)، خذ الأولى فقط
+- إذا كان للمنتج الأساسي أكثر من صورة (مفصولة بفاصلة)، **انسخها كلها كما هي بفواصلها** — Salla يدعم صور متعددة.
 
-**القاعدة 4 — التساتر بلا عطر أساسي (Orphan Testers):**
+**القاعدة 5 — التساتر بلا عطر أساسي (Orphan Testers):**
 - مرّ على كل تستر في قائمتنا
 - تحقق: هل يوجد منتج أساسي (غير تستر) بنفس الاسم؟
 - إذا لم يوجد → أضفه في missing_products مع وصفه كعطر أساسي جديد، واذكر التستر اليتيم في orphan_testers.
@@ -318,6 +373,78 @@ def is_tester(name: str) -> bool:
         return True
     n_norm = re.sub(r'[أإآ]', 'ا', n)
     return any(t in n_norm for t in ['تستر', 'تستير', 'تيستر'])
+
+
+# كلمات تدل على «طقم/مجموعة» (لا تستحق إضافة تستر)
+_SET_KEYWORDS_AR = (
+    'طقم', 'أطقم', 'اطقم', 'مجموعة', 'مجموعه', 'باكج', 'باقة', 'هدية',
+    'هديه', 'بوكس', 'كوليكشن',
+)
+_SET_KEYWORDS_EN = (
+    'set ', ' set', 'gift set', 'bundle', 'collection', 'box set', 'kit',
+    'pack', 'duo', 'trio',
+)
+# نمط للتعرف على أنماط مثل «3 قطع» / «4 قطع» / «قطعتين»
+_PIECES_RX = re.compile(r'\b\d+\s*قطع\b|قطعتين|قطعتان|\b\d+\s*pcs?\b', re.IGNORECASE)
+
+
+def is_set(name: str) -> bool:
+    """يتحقق ما إذا كان المنتج طقماً/مجموعة (لا يحتاج تستراً).
+
+    قواعد التحقق:
+      • وجود كلمة دالة على الطقم (طقم/مجموعة/set/kit/bundle…)
+      • نمط «N قطع» أو «N pcs»
+      • وجود علامة «+» تدل على دمج عدة منتجات في عرض واحد
+    """
+    if not isinstance(name, str) or not name.strip():
+        return False
+
+    n = name.strip()
+    n_lower = n.lower()
+    n_ar = re.sub(r'[أإآ]', 'ا', n_lower)
+
+    # 1) كلمات عربية
+    for kw in _SET_KEYWORDS_AR:
+        kw_norm = re.sub(r'[أإآ]', 'ا', kw)
+        if kw_norm in n_ar:
+            return True
+
+    # 2) كلمات إنجليزية (مع حدود الكلمات لتجنب false positives في duo→ مثلاً)
+    for kw in _SET_KEYWORDS_EN:
+        if kw.strip() in n_lower:
+            # تأكد إنها كلمة مستقلة وليست جزءاً من كلمة أكبر
+            if re.search(rf'\b{re.escape(kw.strip())}\b', n_lower):
+                return True
+
+    # 3) نمط «N قطع» / «N pcs»
+    if _PIECES_RX.search(n):
+        return True
+
+    # 4) علامة «+» في الاسم تدل على دمج عدة منتجات
+    if '+' in n:
+        return True
+
+    return False
+
+
+def _extract_size_for_grouping(name: str) -> int:
+    """يستخرج الحجم بالـ مل بشكل قوي (أكبر رقم متبوع بـ مل/ml يُعتبر الحجم).
+
+    مهم: نأخذ أكبر رقم لتفادي حالات مثل «1 مليون لاكي 100 مل» حيث «1»
+    ليست حجماً.
+    """
+    if not name:
+        return 0
+    matches = _SIZE_RX.findall(str(name))
+    if not matches:
+        return 0
+    sizes = []
+    for m in matches:
+        try:
+            sizes.append(int(float(str(m).replace(',', '.'))))
+        except (ValueError, TypeError):
+            continue
+    return max(sizes) if sizes else 0
 
 
 def calc_tester_price(original_price: float) -> float:
@@ -792,17 +919,56 @@ def ensure_all_testers_added(result: dict, products_payload: list) -> dict:
         return result
 
     # افصل العطور الأساسية عن التساتر الموجودة في القائمة الأصلية
+    # ⚠️ نستثني الأطقم/المجموعات: لا نضيف تستر للأطقم.
     base_perfumes = [
         p for p in products_payload
-        if isinstance(p, dict) and not is_tester(p.get('name', ''))
+        if isinstance(p, dict)
+        and not is_tester(p.get('name', ''))
+        and not is_set(p.get('name', ''))
     ]
     existing_tester_products = [
         p for p in products_payload
         if isinstance(p, dict) and is_tester(p.get('name', ''))
     ]
 
+    # ⭐ قاعدة الحجم الأكبر: إذا كان نفس العطر متوفراً بأحجام متعددة،
+    # نختار فقط الحجم الأكبر للحصول على تستر (لا تستر للأحجام الصغيرة).
+    # نُجمّع العطور حسب هيكل الاسم بدون الحجم.
+    size_groups: dict = {}  # {skeleton_no_size: [(idx, size, price, name), ...]}
+    for bp in base_perfumes:
+        bp_name = (bp.get('name', '') or '').strip()
+        if not bp_name:
+            continue
+        sk_no_size = _normalize_perfume_name(_strip_tester_keyword(bp_name))
+        sz = _extract_size_for_grouping(bp_name)
+        size_groups.setdefault(sk_no_size, []).append(bp)
+
+    # في كل مجموعة، احتفظ فقط بالحجم الأكبر
+    largest_in_group = set()  # ids of base perfumes that should get a tester
+    skipped_for_size = []
+    for sk, items in size_groups.items():
+        if not sk:  # مفقود الهيكل — تخطه
+            continue
+        if len(items) == 1:
+            largest_in_group.add(id(items[0]))
+            continue
+        # احسب الأحجام واختر الأكبر
+        sized = [(it, _extract_size_for_grouping(it.get('name', '') or '')) for it in items]
+        max_size = max((s for _, s in sized), default=0)
+        if max_size == 0:
+            # لا أحجام معروفة — اختر الأول وتخطّى الباقي
+            largest_in_group.add(id(items[0]))
+            for it in items[1:]:
+                skipped_for_size.append(it.get('name', ''))
+            continue
+        # احتفظ بكل من له الحجم الأكبر، تخطّ الأصغر
+        for it, sz in sized:
+            if sz == max_size:
+                largest_in_group.add(id(it))
+            else:
+                skipped_for_size.append(it.get('name', ''))
+
     # مجموعة هياكل أسماء المنتجات التي لها تستر بالفعل في القائمة الأصلية
-    # (نُزيل كلمة "تستر" من اسم التستر قبل التطبيع للحصول على هيكل العطر الأساسي)
     has_tester_skeletons: set = set()
     for tp in existing_tester_products:
         raw = tp.get('name', '') or ''
@@ -841,12 +1007,24 @@ def ensure_all_testers_added(result: dict, products_payload: list) -> dict:
         if not bp_name:
             continue
 
+        # ⭐ تخطّ إذا لم يكن هذا الحجم الأكبر لمجموعته
+        if id(bp) not in largest_in_group:
+            continue
+
         bp_sk = _normalize_perfume_name(_strip_tester_keyword(bp_name))
         try:
             bp_price = float(bp.get('price', 0) or 0)
         except (TypeError, ValueError):
             bp_price = 0.0
-        bp_img = (bp.get('image_url') or '').split(',')[0].strip()
+
+        # 🖼️ احتفظ بقائمة الصور كاملة (مفصولة بفواصل) — Salla يدعم صور متعددة
+        raw_img = (bp.get('image_url') or '').strip()
+        # نظّف ونزّل الفواصل
+        if raw_img:
+            img_list = [u.strip() for u in raw_img.split(',') if u.strip()]
+            bp_img = ','.join(img_list)
+        else:
+            bp_img = ''
 
         # تخطّ إذا اقترحت Gemini له تستر بالفعل (عبر base_product_id)
         if bp_id and bp_id in existing_base_ids:
@@ -860,7 +1038,7 @@ def ensure_all_testers_added(result: dict, products_payload: list) -> dict:
 
         # أضف تستراً تلقائياً بقاعدة التسعير الداخلية
         tester_price = calc_tester_price(bp_price)
-        size_ml = _extract_size_ml(bp_name) or 100
+        size_ml = _extract_size_for_grouping(bp_name) or 100
 
         auto_tester = {
             'base_product_id': bp_id,
@@ -869,10 +1047,10 @@ def ensure_all_testers_added(result: dict, products_payload: list) -> dict:
             'original_price': bp_price,
             'new_price': tester_price,
             'competitor_price': 0,
-            'image_url': bp_img,
+            'image_url': bp_img,  # ← قائمة كاملة بالصور الآن
             'source_store': '',
             'tester_available_in_market': False,
-            'new_description': HTML_TEMPLATE_TESTER,
+            'new_description': minify_html(HTML_TEMPLATE_TESTER),
             'seo_title': build_tester_name(bp_name)[:60],
             'seo_description': (
                 f"تستر {bp_name} أصلي 100% — نفس السائل والثبات والفوحان "
@@ -894,6 +1072,9 @@ def ensure_all_testers_added(result: dict, products_payload: list) -> dict:
         if not isinstance(prev, list):
             prev = []
         result['_auto_added_testers'] = prev + auto_added_names
+    if skipped_for_size:
+        # سجل ما تم تخطيه بسبب وجود حجم أكبر
+        result['_skipped_smaller_sizes'] = skipped_for_size
 
     return result
 
@@ -1319,11 +1500,18 @@ def build_output_excel(result: dict, original_df: pd.DataFrame, template_bytes: 
 
     rows = []
     skipped_existing = 0  # عدّاد للصفوف التي أُسقطت لأنها موجودة فعلاً
+    skipped_sets = 0      # عدّاد للأطقم المتجاهَلة
 
     for t in result.get('testers_to_add', []):
+        t_name = str(t.get('name', '') or '')
+
+        # 🛑 لا تُضِف تستراً لطقم/مجموعة (إن مرّ من Gemini بالخطأ)
+        if is_set(t_name):
+            skipped_sets += 1
+            continue
+
         # 🛡️ حماية نهائية: تخطّ التساتر التي تطابق منتجاً موجوداً (Gemini ربما
         # اقترحت تستراً لمنتج له تستر مماثل في القائمة الأصلية).
-        t_name = str(t.get('name', '') or '')
         t_sk = _normalize_perfume_name(_strip_tester_keyword(t_name))
         if t_sk and t_sk in existing_skeletons:
             # نتخطى فقط إذا كان التستر *الأصلي* موجوداً — لا نريد أن نفقد
@@ -1345,7 +1533,10 @@ def build_output_excel(result: dict, original_df: pd.DataFrame, template_bytes: 
 
         if name_col:  nr[name_col]  = _clean_cell(t.get('name', ''))
         if price_col: nr[price_col] = _clean_cell(t.get('new_price', 0)) or 0
-        if desc_col:  nr[desc_col]  = _clean_cell(t.get('new_description', ''))
+        # 📝 نظّف الـ HTML من الفراغات الزائدة لمنع أسطر فارغة في عرض سلة
+        if desc_col:
+            raw_desc = _clean_cell(t.get('new_description', ''))
+            nr[desc_col] = minify_html(str(raw_desc)) if raw_desc else ''
         if brand_col: nr[brand_col] = brand_name
 
         cat_val = ''
@@ -1360,18 +1551,28 @@ def build_output_excel(result: dict, original_df: pd.DataFrame, template_bytes: 
                 nr[cat_col] = 'العطور'
 
         if img_col:
+            # 🖼️ احتفظ بقائمة الصور الكاملة مفصولة بفواصل (Salla يدعم متعددة)
             img = _clean_cell(t.get('image_url', ''))
             if not img and base_r is not None:
                 raw_img = _clean_cell(base_r.get(img_col, ''))
-                img = str(raw_img).split(',')[0].strip() if raw_img else ''
+                if raw_img:
+                    # نظّف القائمة من الفراغات والقيم الفارغة
+                    img_list = [u.strip() for u in str(raw_img).split(',') if u.strip()]
+                    img = ','.join(img_list)
             nr[img_col] = img
 
         nr = apply_salla_mandatory(nr)
         rows.append(pd.Series(nr))
 
     for m in result.get('missing_products', []):
-        # 🛡️ حماية نهائية: تخطّ المنتجات الناقصة المطابقة لمنتج موجود فعلاً.
         m_name = str(m.get('name', '') or '')
+
+        # 🛑 لا تُضِف طقماً/مجموعة من missing_products
+        if is_set(m_name):
+            skipped_sets += 1
+            continue
+
+        # 🛡️ حماية نهائية: تخطّ المنتجات الناقصة المطابقة لمنتج موجود فعلاً.
         m_sk = _normalize_perfume_name(_strip_tester_keyword(m_name))
         if m_sk and m_sk in existing_skeletons:
             skipped_existing += 1
@@ -1381,7 +1582,9 @@ def build_output_excel(result: dict, original_df: pd.DataFrame, template_bytes: 
 
         if name_col:  nr[name_col]  = _clean_cell(m.get('name', ''))
         if price_col: nr[price_col] = _clean_cell(m.get('price', 0)) or 0
-        if desc_col:  nr[desc_col]  = _clean_cell(m.get('description', ''))
+        if desc_col:
+            raw_desc = _clean_cell(m.get('description', ''))
+            nr[desc_col] = minify_html(str(raw_desc)) if raw_desc else ''
         if brand_col: nr[brand_col] = _clean_cell(m.get('brand', '')) or brand_name
 
         cat_val = _clean_cell(m.get('category', ''))
