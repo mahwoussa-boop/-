@@ -1859,6 +1859,22 @@ def call_gemini_brand(
             if any(x in err_low for x in HARD_ERRORS):
                 raise RuntimeError(f"❌ خطأ صلب في Gemini (لا يُعاد المحاولة): {e}") from e
 
+            # ⚠️ إذا تجاوزت الحصة اليومية (RPD)، لا فائدة من إعادة المحاولة —
+            # الانتظار حتى منتصف الليل بتوقيت المحيط الهادئ ضروري.
+            DAILY_QUOTA_INDICATORS = (
+                'exceeded your current quota', 'exceeded your quota',
+                'requests per day', 'rpd', 'daily quota', 'per_day',
+                'generate_requests_per_model_per_day',
+            )
+            if '429' in err_low and any(x in err_low for x in DAILY_QUOTA_INDICATORS):
+                raise RuntimeError(
+                    f"❌ تجاوزت الحصة اليومية لـ Gemini (RPD).\n"
+                    f"الحلول: (1) انتظر حتى 10:00 صباحاً بتوقيت السعودية لإعادة الحصة. "
+                    f"(2) جرّب نموذج 'gemini-2.5-flash-lite' (حصة أكبر بـ 4 مرات). "
+                    f"(3) فعّل Cloud Billing على حسابك (تيار 1) — يرفع الحد إلى 1,500 RPD.\n"
+                    f"تفاصيل الخطأ: {e}"
+                ) from e
+
             if attempt >= max_retries:
                 break
 
