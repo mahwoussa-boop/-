@@ -2310,21 +2310,39 @@ with st.sidebar:
     )
     st.session_state.api_key = api_key
 
+    # 📋 قائمة نماذج Gemini (محدّثة آخر تحديث: مايو 2026 من توثيق Google الرسمي)
+    # https://ai.google.dev/gemini-api/docs/models
+    #
+    # 🌟 الموصى به افتراضياً: gemini-2.5-flash
+    #    - مستقر ومضمون (ليس Preview)
+    #    - متاح في الـ Free Tier (10 RPM, 250 RPD)
+    #    - متوازن: 90% من جودة Pro بسعر/سرعة Flash
+    #
+    # ⚡ للسرعة والحجم العالي: gemini-2.5-flash-lite (15 RPM, 1000 RPD)
+    # 🧠 للدقة العالية والبحث المعقد: gemini-2.5-pro (5 RPM, 100 RPD)
+    # 🚀 الأحدث (Preview، يتطلب Tier 1 المدفوع): gemini-3-flash, gemini-3.1-pro-preview
     model_name = st.selectbox(
         "🤖 النموذج",
         [
-            'gemini-3-flash-preview',
-            'gemini-3.1-pro-preview',
-            'gemini-3-pro-preview',
-            'gemini-flash-latest',
-            'gemini-pro-latest',
-            'gemini-2.5-flash',
-            'gemini-2.5-pro',
-            'gemini-2.5-flash-lite',
-            'gemini-2.0-flash',
+            # ─── Stable / Production-ready (موصى بها) ───
+            'gemini-2.5-flash',           # ⭐ الأفضل توازناً (الافتراضي)
+            'gemini-2.5-flash-lite',      # أسرع وأرخص لكن أقل دقة
+            'gemini-2.5-pro',             # أعلى دقة، حصة أقل (5 RPM)
+            # ─── Latest aliases (تتحدّث تلقائياً) ───
+            'gemini-flash-latest',        # alias لأحدث Flash مستقر
+            'gemini-pro-latest',          # alias لأحدث Pro مستقر
+            # ─── Preview (يتطلب Cloud Billing) ───
+            'gemini-3-flash',             # أحدث جيل، سرعة عالية
+            'gemini-3.1-pro-preview',     # أدق نموذج (Preview)
+            'gemini-3-flash-lite',        # الأرخص في الجيل الجديد
         ],
-        index=0,
-        help="3-flash-preview: أسرع وأقوى | 3.1-pro-preview: أدق للبحث المعقد | 2.5-flash: مستقر ومضمون",
+        index=0,  # 2.5-flash هو الافتراضي (الأكثر استقراراً)
+        help=(
+            "⭐ 2.5-flash: الموصى به (متوازن، مستقر، Free Tier)\n"
+            "⚡ 2.5-flash-lite: أسرع، حصة أكبر (1000 RPD)\n"
+            "🧠 2.5-pro: أعلى دقة، حصة أقل (100 RPD)\n"
+            "🚀 3-flash / 3.1-pro: أحدث جيل (يتطلب Cloud Billing)"
+        ),
     )
     st.session_state.model_name = model_name
 
