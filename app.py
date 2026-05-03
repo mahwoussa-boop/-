@@ -1,1057 +1,4 @@
-import streamlit as st
-import pandas as pd
-import json
-import io
-import os
-import re
-import time
-import threading
-from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
-from difflib import SequenceMatcher
-from google import genai
-from google.genai import types as genai_types
-from openpyxl import load_workbook
-
-# ─── PAGE CONFIG ─────────────────────────────────────────────────────────────
-st.set_page_config(
-    page_title="مهووس | معالج المنتجات الذكي",
-    page_icon="🌿",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
-st.markdown("""
-<style>
-    body, .stApp { direction: rtl; font-family: 'Segoe UI', Tahoma, Arial, sans-serif; }
-    .brand-card {
-        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-        border: 1px solid #0f3460;
-        border-radius: 12px;
-        padding: 20px;
-        color: white;
-        margin-bottom: 16px;
-    }
-    .stat-box {
-        background: rgba(255,255,255,0.05);
-        border-radius: 8px;
-        padding: 12px;
-        text-align: center;
-    }
-    .section-header {
-        background: linear-gradient(90deg, #0f3460, #533483);
-        color: white;
-        padding: 10px 16px;
-        border-radius: 8px;
-        font-weight: bold;
-        margin: 12px 0;
-    }
-</style>
-""", unsafe_allow_html=True)
-
-# ─── COMPETITOR STORES ───────────────────────────────────────────────────────
-COMPETITOR_STORES = [
-    "https://saeedsalah.com/", "https://vanilla.sa/", "https://sara-makeup.com/",
-    "https://alkhabeershop.com/", "https://www.goldenscent.com/", "https://leesanto.com/",
-    "https://azalperfume.com/", "https://candyniche.com/", "https://luxuryperfumesnish.com/",
-    "https://hanan-store55.com/", "https://areejamwaj.com/", "https://niceonesa.com/",
-    "https://www.sephora.me/sa-ar", "https://www.faces.sa/ar", "https://niche.sa/",
-    "https://worldgivenchy.com/", "https://sarahmakeup37.com/", "https://aromaticcloud.com/",
-    "https://tatayab.com/", "https://kayan9.com/",
-    "https://www.noon.com/saudi-ar/", "https://www.amazon.sa/",
-    "https://en.ounass.com/saudi-arabia/", "https://www.namshi.com/sa-ar/",
-    "https://www.brandsforless.com/en-sa/", "https://www.sivvi.com/en-sa/",
-    "https://haraj.com.sa/", "https://shukran.com/",
-]
-
-# ─── HTML TEMPLATES ──────────────────────────────────────────────────────────
-HTML_TEMPLATE_NEW = (
-    '<p><strong>[مقدمة تسويقية جذابة]</strong></p>'
-    '<h3>التفاصيل والخطوط العطرية باختصار</h3>'
-    '<ul>'
-      '<li><strong>الماركة:</strong> [اسم الماركة]</li>'
-      '<li><strong>اسم العطر:</strong> [اسم العطر]</li>'
-      '<li><strong>الجنس:</strong> [رجالي / نسائي / للجنسين]</li>'
-      '<li><strong>الخط العطري (العائلة):</strong> [مثل: حمضي - أروماتك]</li>'
-      '<li><strong>الحجم:</strong> [الحجم مل]</li>'
-      '<li><strong>التركيز:</strong> [مثل: أودي بارفيوم]</li>'
-      '<li><strong>سنة الإصدار:</strong> [السنة والتوقيع إن وجد]</li>'
-    '</ul>'
-    '<h3>رحلة العطر (النوتات)</h3>'
-    '<ul>'
-      '<li><strong>الافتتاحية:</strong> [وصف]</li>'
-      '<li><strong>القلب العطري:</strong> [وصف]</li>'
-      '<li><strong>القاعدة الأساسية:</strong> [وصف]</li>'
-    '</ul>'
-    '<h3>لماذا تختار هذا العطر؟</h3>'
-    '<ul>'
-      '<li><strong>رائحة متوازنة:</strong> [وصف]</li>'
-      '<li><strong>مثالي لجميع الأوقات:</strong> [وصف]</li>'
-      '<li><strong>أداء قوي:</strong> [وصف]</li>'
-    '</ul>'
-    '<h3>الأسئلة الشائعة</h3>'
-    '<p><strong>هل هذا العطر مناسب للمناخ الحار؟</strong><br>[إجابة]</p>'
-    '<p><strong>هل يمكن استخدامه يومياً؟</strong><br>[إجابة]</p>'
-    '<p><strong>ما هي المناسبة الأفضل لاستخدامه؟</strong><br>[إجابة]</p>'
-    '<h3>اكتشف المزيد من مهووس</h3>'
-    '<ul>'
-      '<li><a href="/categories/perfumes-men">استكشف أحدث العطور الرجالية</a></li>'
-      '<li><a href="/categories/perfumes-women">تصفح أجمل العطور النسائية الجذابة</a></li>'
-      '<li><a href="/categories/niche-perfumes">للباحثين عن التميز، استكشف عطور النيش الفاخرة</a></li>'
-    '</ul>'
-)
-
-HTML_TEMPLATE_TESTER = (
-    '<p><strong>استمتع بالفخامة المطلقة بتكلفة أذكى! نقدم لك تستر "[اسم العطر]" '
-    'من [الماركة] الأصلي 100%، ليمنحك نفس التجربة، الثبات، والفوحان للإصدار '
-    'المغلف ولكن بسعر استثنائي. [مقدمة عن العطر].</strong></p>'
-    '<h3>التفاصيل والخطوط باختصار</h3>'
-    '<ul>'
-      '<li><strong>الماركة:</strong> [اسم الماركة]</li>'
-      '<li><strong>الاسم:</strong> [اسم العطر]</li>'
-      '<li><strong>حالة المنتج:</strong> تستر (Tester) أصلي 100%.</li>'
-      '<li><strong>الجنس:</strong> [رجالي / نسائي / للجنسين]</li>'
-      '<li><strong>الخط (العائلة):</strong> [مثل: حمضي - أروماتك]</li>'
-      '<li><strong>الحجم:</strong> [الحجم مل]</li>'
-      '<li><strong>التركيز:</strong> [مثل: أودي بارفيوم]</li>'
-    '</ul>'
-    '<h3>رحلة النوتات</h3>'
-    '<ul>'
-      '<li><strong>الافتتاحية:</strong> [وصف]</li>'
-      '<li><strong>القلب:</strong> [وصف]</li>'
-      '<li><strong>القاعدة الأساسية:</strong> [وصف]</li>'
-    '</ul>'
-    '<h3>لماذا تختار هذا الإصدار؟</h3>'
-    '<ul>'
-      '<li><strong>رائحة متوازنة:</strong> [وصف]</li>'
-      '<li><strong>مثالي لجميع الأوقات:</strong> [وصف]</li>'
-      '<li><strong>أداء قوي:</strong> [وصف]</li>'
-    '</ul>'
-    '<h3>الدليل الشامل للتساتر من متجر مهووس</h3>'
-    '<p>هل تتساءل عن سر التساتر ولماذا تحظى بشعبية هائلة بين عشاق الروائح '
-    'الفاخرة؟ يسعدنا في متجر مهووس أن نكشف لك هذا السر، لنجعل تجربة تسوقك أكثر '
-    'ذكاءً وثقة.</p>'
-    '<p><strong>ما هو التستر؟</strong><br>التستر هو نسخة أصلية 100% تصدرها '
-    'الشركة المصنعة (الماركات العالمية) جنباً إلى جنب مع المنتجات التجارية. '
-    'الهدف الأساسي من إنتاجه هو وضعه في المتاجر والبوتيكات الفاخرة ليتمكن '
-    'العملاء من تجربة الرائحة والأداء قبل الشراء.</p>'
-    '<p><strong>ما الفرق بين التستر والإصدار العادي المغلف؟</strong><br>'
-    'الفرق الوحيد والأساسي يكمن في "الشكل الخارجي" فقط، ولا مساومة أبداً على '
-    'الجودة:</p>'
-    '<ul>'
-      '<li><strong>السائل:</strong> متطابق 100% من حيث المكونات، التركيز، '
-      'الثبات، والفوحان. أنت تحصل على نفس القطرة الأصلية تماماً.</li>'
-      '<li><strong>الزجاجة:</strong> يأتي في نفس الزجاجة الأصلية الفاخرة '
-      'للماركة، وقد يُطبع عليها أحياناً عبارة (Tester) أو (Demonstration).</li>'
-      '<li><strong>العلبة الخارجية:</strong> بهدف تقليل التكاليف، تُصدر '
-      'الشركات التساتر في علب كرتونية بسيطة (غالباً بيضاء أو بنية صديقة '
-      'للبيئة)، وتأتي بدون الغلاف البلاستيكي الشفاف (السلوفان).</li>'
-      '<li><strong>الغطاء:</strong> تأتي معظم التساتر بغطائها الأصلي الفاخر، '
-      'وفي حالات نادرة جداً قد تأتي بدون غطاء بناءً على تصميم الشركة '
-      'المصنعة.</li>'
-    '</ul>'
-    '<p><strong>لماذا يعتبر التستر استثماراً ذكياً؟</strong><br>إذا كنت '
-    'تشتري لاقتنائك الشخصي وليس لتقديمه كهدية رسمية، فإن التستر هو الخيار '
-    'الأكثر ذكاءً وتوفيراً. فهو يتيح لك الاستمتاع بأرقى الروائح العالمية '
-    'وإصدارات النيش بأسعار اقتصادية مخفضة جداً، لتحصل على أقصى قيمة مقابل ما '
-    'تدفعه.</p>'
-    '<p><strong>ضمان مهووس الذهبي</strong><br>نحن في متجر مهووس نضع ثقتك في '
-    'المقام الأول. نضمن لك أصالة جميع التساتر المتوفرة لدينا بنسبة 100%. يتم '
-    'توفيرها من نفس الموزعين المعتمدين للماركات العالمية، لتعيش تجربة الفخامة '
-    'المطلقة براحة بال تامة.</p>'
-    '<h3>اكتشف المزيد من مهووس</h3>'
-    '<ul>'
-      '<li><a href="/categories/testers">تصفح تشكيلتنا الواسعة من التساتر '
-      'الأصلية</a></li>'
-      '<li><a href="/categories/niche-perfumes-men">تسوق المزيد من إصدارات '
-      'النيش الرجالية الفاخرة</a></li>'
-      '<li><a href="/categories/niche-perfumes-women">اكتشف أحدث إصدارات '
-      'النيش النسائية</a></li>'
-    '</ul>'
-)
-
-
-def minify_html(html: str) -> str:
-    """يُزيل الفراغات الزائدة بين عناصر HTML لمنع ظهور أسطر فارغة في عرض سلة.
-
-    يحوّل: '<p>...</p>\n  <h3>...' إلى: '<p>...</p><h3>...'
-    """
-    if not html:
-        return ''
-    # احذف الفراغات بين الوسوم
-    cleaned = re.sub(r'>\s+<', '><', str(html).strip())
-    # احذف الأسطر الجديدة وعلامات Tab والمسافات المتعددة داخل النص
-    cleaned = re.sub(r'[\r\n\t]+', ' ', cleaned)
-    cleaned = re.sub(r'  +', ' ', cleaned)
-    return cleaned.strip()
-
-
-# ═════════════════════════════════════════════════════════════════════════════
-#  تصنيفات التستر — مهووس
-# ═════════════════════════════════════════════════════════════════════════════
-
-TESTER_CATEGORY_MEN    = 'العطور > عطور التستر > عطور التستر رجالية'
-TESTER_CATEGORY_WOMEN  = 'العطور > عطور التستر > عطور التستر نسائية'
-TESTER_CATEGORY_NICHE  = 'العطور > عطور التستر > عطور التستر النيش'
-TESTER_CATEGORY_NEW    = 'العطور > عطور التستر > عطور التستر جديدة'
-TESTER_CATEGORY_ROOT   = 'العطور > عطور التستر'
-
-
-def map_to_tester_category(base_category: str, perfume_name: str = '') -> str:
-    """يُحوّل تصنيف العطر الأساسي إلى تصنيف التستر المقابل.
-
-    أمثلة:
-      'العطور > عطور رجالية > رسمية'  → 'العطور > عطور التستر > عطور التستر رجالية'
-      'العطور > عطور النيش > للجنسين' → 'العطور > عطور التستر > عطور التستر النيش'
-      'العطور > عطور نسائية > جذابة'  → 'العطور > عطور التستر > عطور التستر نسائية'
-    """
-    bc = str(base_category or '')
-    pn = str(perfume_name or '').lower()
-    pn_norm = re.sub(r'[أإآ]', 'ا', pn)
-
-    # التحقق أولاً من النيش (له أولوية عالية لأن الإصدارات النيش غالباً unisex)
-    if 'النيش' in bc or 'نيش' in bc or 'niche' in pn:
-        return TESTER_CATEGORY_NICHE
-
-    # استخدم detect_gender المحسّنة (تحتوي قائمة كلمات أوسع)
-    gender = detect_gender(perfume_name, bc)
-    if gender == 'رجالي':
-        return TESTER_CATEGORY_MEN
-    if gender == 'نسائي':
-        return TESTER_CATEGORY_WOMEN
-    # للجنسين → نيش (لأن detect_gender يُرجع للجنسين فقط للنيش)
-    return TESTER_CATEGORY_NICHE
-
-
-def detect_gender(perfume_name: str, category: str = '') -> str:
-    """يستنتج جنس العطر من الاسم/التصنيف."""
-    pn = str(perfume_name or '').lower()
-    pn_norm = re.sub(r'[أإآ]', 'ا', pn)
-    bc = str(category or '')
-
-    # 1) نيش للجنسين / unisex صريح
-    if 'unisex' in pn or 'للجنسين' in pn_norm or 'للجنسين' in bc:
-        return 'للجنسين'
-
-    # 2) نسائي — كلمات صريحة
-    feminine_keywords = [
-        'نسائ', 'للنساء', 'للسيدات', 'سيدات',
-        'women', 'femme', 'pour femme', 'lady', 'her', 'miss',
-        'mademoiselle', 'queen', 'princess',
-        'ليدي',  # Paco Rabanne Lady Million
-        'كوين',  # Queen
-        'مدام',
-    ]
-    for kw in feminine_keywords:
-        if kw in pn_norm or (' ' + kw + ' ') in (' ' + pn + ' '):
-            return 'نسائي'
-
-    # 3) رجالي — كلمات صريحة
-    masculine_keywords = [
-        'رجال', 'للرجال', 'رجالي',
-        ' men ', ' men', 'homme', 'pour homme', 'mr ', 'mr.',
-        'gentleman', 'boss', 'king',
-    ]
-    for kw in masculine_keywords:
-        if kw in pn_norm or (' ' + kw + ' ') in (' ' + pn + ' '):
-            return 'رجالي'
-
-    # 4) من التصنيف الأساسي
-    if 'نسائ' in bc:
-        return 'نسائي'
-    if 'رجال' in bc:
-        return 'رجالي'
-
-    # 5) إذا لم نتمكن من تحديد، نختار "رجالي" كافتراضي للعطور التجارية
-    # (الجزء الأكبر من السوق رجالي إلا إذا كان نيش)
-    if 'النيش' in bc or 'niche' in pn:
-        return 'للجنسين'
-    return 'رجالي'
-
-
-def detect_concentration(perfume_name: str) -> str:
-    """يستنتج تركيز العطر من اسمه (Eau de Parfum / Toilette / Cologne / Elixir / Parfum)."""
-    pn = str(perfume_name or '').lower()
-    pn_norm = re.sub(r'[أإآ]', 'ا', pn)
-
-    # Elixir / إكسير / اليكسير (الأكثر تركيزاً)
-    if 'elixir' in pn or 'اليكسير' in pn_norm or 'الكسير' in pn_norm or 'اكسير' in pn_norm:
-        return 'إكسير (Elixir)'
-    # Parfum / Extrait
-    if ('extrait' in pn or 'parfum intense' in pn
-            or 'برفان انتنس' in pn_norm or 'انتنس' in pn_norm and 'parfum' in pn):
-        return 'إكستريت دي بارفان (Extrait)'
-    # Eau de Parfum / EDP
-    if (' edp' in f' {pn} ' or 'eau de parfum' in pn or 'بارفيوم' in pn_norm
-            or 'بارفان' in pn_norm or 'برفان' in pn_norm or 'برفيوم' in pn_norm
-            or 'parfum' in pn):
-        return 'أو دو بارفيوم (EDP)'
-    # Eau de Toilette / EDT
-    if (' edt' in f' {pn} ' or 'eau de toilette' in pn or 'تواليت' in pn_norm
-            or 'توالت' in pn_norm or 'toilette' in pn):
-        return 'أو دو تواليت (EDT)'
-    # Eau de Cologne
-    if 'cologne' in pn or 'كولونيا' in pn_norm:
-        return 'أو دو كولون (EDC)'
-
-    return 'أو دو بارفيوم'
-
-
-def clean_perfume_display_name(name: str) -> str:
-    """يُزيل كلمات «عطر/تستر» من الاسم لعرضه في الوصف بشكل احترافي."""
-    if not name:
-        return ''
-    n = str(name).strip()
-    # احذف «تستر» من النهاية أو البداية
-    n = re.sub(r'^(?:تستر|تيستر|تستير|tester|testr)\s+', '', n, flags=re.IGNORECASE)
-    n = re.sub(r'\s+(?:تستر|تيستر|تستير|tester|testr)\s*$', '', n, flags=re.IGNORECASE)
-    # احذف «عطر/العطر» في أي مكان (بداية، وسط، نهاية)
-    n = re.sub(r'\bعطر\b', '', n)
-    n = re.sub(r'\bالعطر\b', '', n)
-    # نظّف الفراغات الزائدة
-    n = re.sub(r'\s+', ' ', n).strip()
-    return n
-
-
-def clean_brand_display_name(brand: str) -> str:
-    """يُنظّف اسم الماركة من الفواصل/الترميز.
-
-    أمثلة:
-      'باكو رابان | Paco Rabanne' → 'باكو رابان'  (الاسم العربي فقط للعرض)
-      'Paco Rabanne | باكو رابان' → 'باكو رابان'
-      'كرييد' → 'كرييد'
-    """
-    if not brand:
-        return ''
-    b = str(brand).strip()
-    # إذا كانت الصيغة "عربي | إنجليزي" أو العكس، اختر العربية للعرض في النص
-    if '|' in b:
-        parts = [p.strip() for p in b.split('|') if p.strip()]
-        # ابحث عن الجزء الذي يحتوي حروفاً عربية
-        ar_part = next(
-            (p for p in parts if re.search(r'[\u0600-\u06FF]', p)),
-            None,
-        )
-        if ar_part:
-            return ar_part
-        # وإلا، خذ أول جزء
-        return parts[0] if parts else b
-    return b
-
-
-def fill_tester_template_basics(html_template: str, brand_name: str,
-                                 perfume_name: str, size_ml: int,
-                                 base_category: str = '') -> str:
-    """يملأ ما يمكن ملؤه برمجياً في القالب: الماركة، الاسم، الحجم، الجنس، التركيز.
-
-    الحقول التي لا يمكن ملؤها بدقة (النوتات، العائلة العطرية، الأسئلة الشائعة)
-    تُترك كما هي لتُملأ لاحقاً عبر Gemini أو تُستبدل برسالة عامة.
-    """
-    if not html_template:
-        return ''
-
-    h = html_template
-    clean_name = clean_perfume_display_name(perfume_name)
-    clean_brand = clean_brand_display_name(brand_name)
-    gender = detect_gender(perfume_name, base_category)
-    concentration = detect_concentration(perfume_name)
-
-    # استبدال القيم الأساسية المعروفة
-    h = h.replace('[اسم الماركة]', clean_brand)
-    h = h.replace('[اسم العطر]', clean_name)
-    h = h.replace('[الماركة]', clean_brand)
-    h = h.replace('[الحجم مل]', f'{size_ml} مل' if size_ml else '')
-    h = h.replace('[رجالي / نسائي / للجنسين]', gender)
-    h = h.replace('[رجالي / نسائي]', gender)
-    h = h.replace('[مثل: أودي بارفيوم]', concentration)
-    h = h.replace('[مثل: أو دو بارفيوم]', concentration)
-    h = h.replace('[التركيز]', concentration)
-
-    return h
-
-
-# ═════════════════════════════════════════════════════════════════════════════
-#  إثراء التساتر التلقائية — استدعاء Gemini لتعبئة التفاصيل المتخصصة
-# ═════════════════════════════════════════════════════════════════════════════
-
-ENRICHMENT_PROMPT = """أنت خبير عطور محترف. أمامك قائمة من تساتر العطور تحتاج لتعبئة تفاصيل احترافية لكل واحد.
-
-المعلومات المتوفرة لكل تستر:
-- اسم العطر الأساسي
-- الماركة
-- الحجم
-- الجنس (مستنتج)
-- التركيز (مستنتج)
-
-مطلوب منك لكل تستر:
-١) **مقدمة تسويقية جذابة** (سطر إلى سطرين)
-٢) **العائلة العطرية** (مثل: حمضي - أروماتك / شرقي - زهري)
-٣) **النوتات الثلاث**: الافتتاحية، القلب، القاعدة (وصف مختصر لكل واحد)
-٤) **3 أسباب لاختيار الإصدار** (جملة واحدة لكل سبب)
-٥) **3 إجابات للأسئلة الشائعة**: المناخ الحار، الاستخدام اليومي، المناسبة الأفضل
-
-أرجع النتائج كـ JSON صحيح بالتنسيق التالي بالضبط:
-
-```json
-{{
-  "enrichments": [
-    {{
-      "tester_id": "<معرّف التستر الذي أُعطي لك>",
-      "intro": "مقدمة تسويقية...",
-      "fragrance_family": "شرقي - خشبي",
-      "top_notes": "البرغموت والمندرين...",
-      "heart_notes": "الياسمين والورد...",
-      "base_notes": "العنبر والمسك...",
-      "reason_1": "رائحة فاخرة طويلة الأمد",
-      "reason_2": "مناسب للمناسبات الرسمية والكاجوال",
-      "reason_3": "ثبات قوي يدوم طوال اليوم",
-      "faq_hot": "نعم، يتميز بأداء قوي في المناخ الحار...",
-      "faq_daily": "مثالي للاستخدام اليومي بفضل توازنه...",
-      "faq_occasion": "يناسب المناسبات المسائية والرسمية..."
-    }}
-  ]
-}}
-```
-
-🔴 قواعد صارمة:
-- استخدم **معلومات حقيقية وصحيحة** عن كل عطر — لا تخترع نوتات
-- إذا لم تكن متأكداً من النوتات الفعلية لعطر معين، اكتب وصفاً عاماً موثوقاً مرتبطاً بنوع العطر وعائلته
-- اكتب باللغة العربية فقط
-- لا تُضِف أي حقول إضافية خارج التنسيق المطلوب
-- المعرّف tester_id يجب أن يطابق المعطى لك بالحرف
-
-قائمة التساتر:
-{testers_json}
-"""
-
-
-def enrich_auto_added_testers(
-    result: dict,
-    brand_name: str,
-    api_key: str,
-    model_name: str = 'gemini-2.5-flash',
-    batch_size: int = 8,
-    progress_cb=None,
-) -> dict:
-    """يستدعي Gemini لتعبئة تفاصيل احترافية للتساتر التلقائية.
-
-    لكل تستر مع `_auto_added=True`:
-      - يستبدل [وصف]، [الخط العطري]، [الافتتاحية]، إلخ. بمعلومات حقيقية
-      - يحدّث `seo_description` بمقدمة احترافية
-
-    Args:
-        result: قاموس النتائج بعد ensure_all_testers_added
-        brand_name: اسم الماركة (للسياق)
-        api_key: مفتاح Gemini API
-        model_name: اسم الموديل
-        batch_size: عدد التساتر في كل استدعاء (افتراضي 8)
-        progress_cb: callback اختياري(int, int) لتحديث التقدم
-
-    Returns:
-        result مُحدَّث بأوصاف كاملة. إذا فشل Gemini، يُترك القالب كما هو.
-    """
-    if not isinstance(result, dict):
-        return result
-
-    auto_testers = [
-        t for t in (result.get('testers_to_add') or [])
-        if isinstance(t, dict) and t.get('_auto_added')
-    ]
-    if not auto_testers:
-        return result
-
-    try:
-        client = genai.Client(api_key=api_key)
-    except Exception:
-        return result  # بدون Gemini، نُرجع كما هو
-
-    config = genai_types.GenerateContentConfig(
-        temperature=0.4,
-        max_output_tokens=16384,
-        response_mime_type='application/json',
-    )
-
-    total = len(auto_testers)
-    processed = 0
-
-    for batch_start in range(0, total, batch_size):
-        batch = auto_testers[batch_start:batch_start + batch_size]
-
-        # بناء قائمة JSON للدفعة
-        batch_data = []
-        for idx, t in enumerate(batch):
-            tester_id = f"t{batch_start + idx}"
-            t['_enrich_id'] = tester_id  # نستخدم هذا للتطابق
-            clean_name = clean_perfume_display_name(t.get('name', ''))
-            batch_data.append({
-                'tester_id': tester_id,
-                'perfume_name': clean_name,
-                'brand': brand_name,
-                'size_ml': t.get('size_ml', 100),
-                'gender': detect_gender(t.get('name', '')),
-                'concentration': detect_concentration(t.get('name', '')),
-            })
-
-        prompt = ENRICHMENT_PROMPT.format(
-            testers_json=json.dumps(batch_data, ensure_ascii=False, indent=2)
-        )
-
-        # استدعاء Gemini مع إعادة محاولات بسيطة
-        text = ''
-        for attempt in range(3):
-            try:
-                resp = client.models.generate_content(
-                    model=model_name,
-                    contents=prompt,
-                    config=config,
-                )
-                text = (resp.text or '').strip()
-                if text:
-                    break
-            except Exception:
-                if attempt < 2:
-                    time.sleep(2 * (attempt + 1))
-                continue
-
-        if not text:
-            # فشل الإثراء لهذه الدفعة — تخطّ وكمل
-            processed += len(batch)
-            if progress_cb:
-                try:
-                    progress_cb(processed, total)
-                except Exception:
-                    pass
-            continue
-
-        # تحليل JSON
-        try:
-            data = extract_json(text)
-        except Exception:
-            processed += len(batch)
-            if progress_cb:
-                try:
-                    progress_cb(processed, total)
-                except Exception:
-                    pass
-            continue
-
-        enrichments = data.get('enrichments') or []
-        if not isinstance(enrichments, list):
-            enrichments = []
-
-        # طبّق الإثراء على كل تستر
-        enrich_by_id = {
-            str(e.get('tester_id', '') or ''): e
-            for e in enrichments if isinstance(e, dict)
-        }
-
-        for t in batch:
-            tester_id = t.get('_enrich_id', '')
-            e = enrich_by_id.get(tester_id)
-            if not e:
-                continue
-
-            # ابنِ الوصف من القالب الكامل مع كل القيم المُملوءة
-            new_desc = fill_tester_template_complete(
-                brand_name=brand_name,
-                perfume_name=t.get('name', ''),
-                size_ml=t.get('size_ml', 100),
-                base_category='',  # سيُحدَّد في build_output_excel
-                enrichment=e,
-            )
-            t['new_description'] = new_desc
-
-            # حدّث seo_description بالمقدمة الجديدة
-            intro = (e.get('intro') or '').strip()
-            if intro:
-                t['seo_description'] = intro[:155]
-
-            # احذف معرّف الإثراء بعد الانتهاء
-            t.pop('_enrich_id', None)
-
-        processed += len(batch)
-        if progress_cb:
-            try:
-                progress_cb(processed, total)
-            except Exception:
-                pass
-
-    return result
-
-
-def fill_tester_template_complete(
-    brand_name: str,
-    perfume_name: str,
-    size_ml: int,
-    base_category: str = '',
-    enrichment: dict = None,
-) -> str:
-    """يبني وصف تستر كامل بكل التفاصيل المملوءة، جاهز للعرض على العميل."""
-    enrichment = enrichment or {}
-    clean_name = clean_perfume_display_name(perfume_name)
-    clean_brand = clean_brand_display_name(brand_name)
-    gender = detect_gender(perfume_name, base_category)
-    concentration = detect_concentration(perfume_name)
-
-    intro = (enrichment.get('intro') or
-             f"تستر {clean_name} من {clean_brand} الأصلي 100% — نفس السائل والثبات والفوحان للإصدار المغلف بسعر استثنائي.")
-    family = enrichment.get('fragrance_family') or 'شرقي - خشبي'
-    top = enrichment.get('top_notes') or 'افتتاحية متوازنة وجذابة'
-    heart = enrichment.get('heart_notes') or 'قلب عطري دافئ ومتناغم'
-    base = enrichment.get('base_notes') or 'قاعدة ثابتة طويلة الأمد'
-    r1 = enrichment.get('reason_1') or 'رائحة فاخرة بصبغة مميزة'
-    r2 = enrichment.get('reason_2') or 'ثبات قوي وفوحان ممتاز يدوم طويلاً'
-    r3 = enrichment.get('reason_3') or 'مناسب لمختلف المناسبات والأوقات'
-    faq_hot = (enrichment.get('faq_hot') or
-               'نعم، يتميز هذا الإصدار بأداء جيد في المناخ الحار بفضل تركيبته المتوازنة.')
-    faq_daily = (enrichment.get('faq_daily') or
-                 'مثالي للاستخدام اليومي وللمناسبات الخاصة على حد سواء.')
-    faq_occasion = (enrichment.get('faq_occasion') or
-                    'يناسب المناسبات الرسمية والكاجوال والخروج المسائي.')
-
-    html = (
-        f'<p><strong>{intro}</strong></p>'
-        f'<h3>التفاصيل والخطوط باختصار</h3>'
-        f'<ul>'
-          f'<li><strong>الماركة:</strong> {clean_brand}</li>'
-          f'<li><strong>الاسم:</strong> {clean_name}</li>'
-          f'<li><strong>حالة المنتج:</strong> تستر (Tester) أصلي 100%.</li>'
-          f'<li><strong>الجنس:</strong> {gender}</li>'
-          f'<li><strong>الخط (العائلة):</strong> {family}</li>'
-          f'<li><strong>الحجم:</strong> {size_ml} مل</li>'
-          f'<li><strong>التركيز:</strong> {concentration}</li>'
-        f'</ul>'
-        f'<h3>رحلة النوتات</h3>'
-        f'<ul>'
-          f'<li><strong>الافتتاحية:</strong> {top}</li>'
-          f'<li><strong>القلب:</strong> {heart}</li>'
-          f'<li><strong>القاعدة الأساسية:</strong> {base}</li>'
-        f'</ul>'
-        f'<h3>لماذا تختار هذا الإصدار؟</h3>'
-        f'<ul>'
-          f'<li><strong>رائحة متوازنة:</strong> {r1}</li>'
-          f'<li><strong>مثالي لجميع الأوقات:</strong> {r2}</li>'
-          f'<li><strong>أداء قوي:</strong> {r3}</li>'
-        f'</ul>'
-        f'<h3>الأسئلة الشائعة</h3>'
-        f'<p><strong>هل هذا التستر مناسب للمناخ الحار؟</strong><br>{faq_hot}</p>'
-        f'<p><strong>هل يمكن استخدامه يومياً؟</strong><br>{faq_daily}</p>'
-        f'<p><strong>ما هي المناسبة الأفضل لاستخدامه؟</strong><br>{faq_occasion}</p>'
-        f'<h3>الدليل الشامل للتساتر من متجر مهووس</h3>'
-        f'<p>هل تتساءل عن سر التساتر ولماذا تحظى بشعبية هائلة بين عشاق الروائح '
-        f'الفاخرة؟ يسعدنا في متجر مهووس أن نكشف لك هذا السر، لنجعل تجربة تسوقك '
-        f'أكثر ذكاءً وثقة.</p>'
-        f'<p><strong>ما هو التستر؟</strong><br>التستر هو نسخة أصلية 100% '
-        f'تصدرها الشركة المصنعة (الماركات العالمية) جنباً إلى جنب مع المنتجات '
-        f'التجارية. الهدف الأساسي من إنتاجه هو وضعه في المتاجر والبوتيكات '
-        f'الفاخرة ليتمكن العملاء من تجربة الرائحة والأداء قبل الشراء.</p>'
-        f'<p><strong>ما الفرق بين التستر والإصدار العادي المغلف؟</strong><br>'
-        f'الفرق الوحيد يكمن في "الشكل الخارجي" فقط، ولا مساومة على الجودة:</p>'
-        f'<ul>'
-          f'<li><strong>السائل:</strong> متطابق 100% من حيث المكونات، التركيز، '
-          f'الثبات، والفوحان.</li>'
-          f'<li><strong>الزجاجة:</strong> نفس الزجاجة الأصلية الفاخرة، وقد '
-          f'يُطبع عليها أحياناً عبارة (Tester).</li>'
-          f'<li><strong>العلبة الخارجية:</strong> علب كرتونية بسيطة لتقليل '
-          f'التكاليف.</li>'
-          f'<li><strong>الغطاء:</strong> غطاء أصلي فاخر في الغالب.</li>'
-        f'</ul>'
-        f'<p><strong>ضمان مهووس الذهبي</strong><br>نضمن أصالة جميع التساتر '
-        f'بنسبة 100% — من نفس الموزعين المعتمدين للماركات العالمية.</p>'
-        f'<h3>اكتشف المزيد من مهووس</h3>'
-        f'<ul>'
-          f'<li><a href="/categories/testers">تصفح تشكيلتنا الواسعة من '
-          f'التساتر الأصلية</a></li>'
-          f'<li><a href="/categories/niche-perfumes-men">تسوق المزيد من '
-          f'إصدارات النيش الرجالية الفاخرة</a></li>'
-          f'<li><a href="/categories/niche-perfumes-women">اكتشف أحدث '
-          f'إصدارات النيش النسائية</a></li>'
-        f'</ul>'
-    )
-    return html
-
-SYSTEM_INSTRUCTION_TEMPLATE = """## هويتك ومهمتك
-أنت **خبير عطور محترف بخبرة 20 سنة** + محلل تنافسي لمتجر مهووس في السوق السعودي.
-مهمتك:
-١) **إضافة تستر إلزامي** لكل عطر أساسي ليس لديه تستر في قائمتنا (سياسة جديدة).
-٢) اكتشاف المنتجات الناقصة عند المنافسين.
-٣) كتابة وصف احترافي **فقط للمنتجات الجديدة** التي تقترحها.
-
-## ❌ ممنوع منعاً باتاً
-- لا تُعيد كتابة أو تُحدّث وصف أي منتج موجود مسبقاً في قائمتنا
-- products_updated يجب أن يكون دائماً [] قائمة فارغة
-- لا تقترح منتجاً موجوداً مسبقاً ولو بصيغة مختلفة
-
-## قواعد التساتر (الأهم) — السياسة الجديدة: التستر إلزامي لكل عطر *مؤهل*
-
-**🛑 استثناءات مهمة (لا تُضِف تستراً لها أبداً):**
-1. **الأطقم/المجموعات**: أي منتج يحتوي اسمه على «طقم/أطقم/مجموعة/Set/Kit/Bundle/Collection/Box» أو «N قطع» (مثل: "3 قطع") أو رمز «+» الذي يدل على دمج عدة منتجات. مثال يجب تجاهله: "مجموعة باكو رابان مليون جولد للنساء 3 قطع".
-2. **الأحجام الصغيرة المكررة**: إذا كان نفس العطر موجوداً بأحجام متعددة (مثل 100مل و50مل لنفس الإصدار)، أضف تستراً **فقط للحجم الأكبر**. تجاهل الأحجام الأصغر تماماً.
-
-**القاعدة 1 — فحص وجود التستر:**
-- لكل عطر أساسي *مؤهل* في قائمتنا (ليس طقماً، وهو الحجم الأكبر لإصداره)، تحقق: هل يوجد منتج آخر في القائمة يحتوي اسمه على "تستر" أو "Tester" لنفس العطر؟
-- إذا وُجد التستر → **تخطّ، لا تقترح شيئاً**
-- إذا لم يُوجد → انتقل للقاعدة 2 (إلزامي).
-
-**القاعدة 2 — البحث المرجعي عن سعر التستر + الإضافة الإلزامية:**
-- ابحث في Google عن سعر التستر عند المنافسين بهذه الصيغ:
-  1. "[اسم العطر] tester Saudi Arabia price"
-  2. "[اسم العطر] تستر السعر السعودية"
-  3. "[اسم الماركة] tester site:sa"
-- ابحث في **أي** متجر سعودي يظهر في النتائج (سواء كان في القائمة المرجعية أم لا)
-- سجّل سعر المنافس في حقل `competitor_price` (للمرجعية فقط) واسم المتجر في `source_store`
-- 🔴 **سياسة إلزامية:** أضف التستر في `testers_to_add` **دائماً** لكل عطر أساسي مؤهل ليس له تستر في قائمتنا، **حتى لو لم تجد التستر عند أي منافس سعودي**:
-  - إذا وجدت سعر المنافس → ضعه في `competitor_price`، وضع `tester_available_in_market = true`، واسم المتجر في `source_store`.
-  - إذا لم تجد → اجعل `competitor_price = 0`، `tester_available_in_market = false`، و `source_store = ""`.
-  - في كل الحالات، `new_price` يُحسب بقاعدة التسعير الداخلية (موضحة أدناه) وليس بسعر المنافس.
-
-**القاعدة 3 — اسم التستر:**
-- يجب أن يبدأ اسم التستر بكلمة «تستر» (وليس في النهاية).
-- صيغة الاسم: `تستر [اسم العطر بدون كلمة "عطر" في أوله]`
-- مثال صحيح: «تستر باكو رابان فانتوم 100مل»
-- مثال خاطئ: «عطر باكو رابان فانتوم 100مل تستر»
-
-**القاعدة 4 — صورة التستر:**
-- الصورة تُؤخذ حرفياً من حقل image_url للمنتج الأساسي الموجود في قائمتنا
-- لا تبحث عن صورة جديدة للتستر أبداً
-- إذا كان للمنتج الأساسي أكثر من صورة (مفصولة بفاصلة)، **انسخها كلها كما هي بفواصلها** — Salla يدعم صور متعددة.
-
-**القاعدة 5 — التساتر بلا عطر أساسي (Orphan Testers):**
-- مرّ على كل تستر في قائمتنا
-- تحقق: هل يوجد منتج أساسي (غير تستر) بنفس الاسم؟
-- إذا لم يوجد → أضفه في missing_products مع وصفه كعطر أساسي جديد، واذكر التستر اليتيم في orphan_testers.
-
-## قواعد المنتجات الناقصة
-- قارن قائمتنا الكاملة بما يبيعه المنافسون لنفس الماركة
-- ركّز على: الأكثر مبيعاً، الإصدارات الجديدة، والأحجام المختلفة الشائعة
-- كل مقترح يجب أن يكون متوفراً للشراء الآن في متجر محدد (اذكر المتجر)
-- الأولوية للمنتجات الأكثر مبيعاً (bestsellers)
-
-## أسلوب الكتابة — تعلّم من هذه الأمثلة الحقيقية
-{writing_dna}
-
-## قوالب HTML الإلزامية للمنتجات الجديدة فقط
-### قالب العطور الجديدة/الأساسية:
-{HTML_TEMPLATE_NEW}
-
-### قالب التساتر الجديدة:
-{HTML_TEMPLATE_TESTER}
-
-## صرامة مطلقة ضد الاختراع
-- لا تخترع عطراً أو سعراً أو رابط صورة غير موجود فعلياً
-- إذا لم تجد معلومة موثوقة، اترك الحقل فارغاً (لكن **لا تحذف** التستر — التستر إلزامي)
-- المنتجات الناقصة (missing_products) يجب أن تكون موجودة فعلياً في متجر سعودي محدد
-- التستر **يُضاف دائماً** حتى بدون توافره في السوق، فهذه سياستنا الداخلية
-
-## 🚫 ممنوع التكرار الداخلي (قواعد صارمة)
-- ممنوع منعاً باتاً تكرار نفس العطر أو التستر داخل المصفوفة. إذا وجدت العطر في أكثر من متجر منافس، اختر المتجر الأفضل أو الأرخص واذكره **مرة واحدة فقط**، وتجاهل البقية تماماً.
-- لا تكرر نفس base_product_id في testers_to_add. كل base_product_id يظهر مرة واحدة فقط مهما تعددت المتاجر التي تبيع التستر.
-- لا تكرر نفس المنتج في missing_products بصيغ مختلفة (مثل "Fame Parfum 80ml" و "فيم بارفان 80 مل") — كلها نفس المنتج، اذكره مرة واحدة فقط.
-
-## 🏷️ قواعد source_store
-- يُفضَّل أن يكون من قائمة المتاجر المرجعية competitors_json
-- لكن إذا وجدت المنتج في متجر سعودي آخر موثوق، سجّله بنطاقه الفعلي (مثال: "noon.com")
-- ممنوع اختراع متجر غير موجود — يجب أن يكون رابط المنتج قابلاً للتحقق
-- إذا لم تجد التستر عند أي منافس، اجعل `source_store = ""` (لكن أضف التستر دائماً)
-
-## 📐 صرامة مخطط JSON
-- يجب أن تحتوي **جميع** عناصر missing_products على الحقلين image_url_1 و image_url_2 بشكل دائم. إذا لم تجد صورة ثانية، اجعل قيمتها سلسلة نصية فارغة "" — ولا تحذف المفتاح أبداً.
-- جميع عناصر testers_to_add يجب أن تحتوي الحقلين `competitor_price` و `tester_available_in_market` (افتراضياً 0 و false إذا لم يُوجد التستر عند منافس).
-- جميع المفاتيح المذكورة في مخطط الإخراج إلزامية في كل عنصر؛ القيم الفارغة تُمثَّل بـ "" أو 0 أو false وليس بحذف المفتاح.
-
-## المتاجر السعودية للمقارنة (انسخ source_store حرفياً من هذه القائمة):
-{competitors_json}
-
-## قواعد التسعير الداخلية (تُطبَّق دائماً على new_price)
-- تستر لمنتج أقل من 1000 ريال: `new_price = original_price - 70`
-- تستر لمنتج 1000 ريال فأكثر: `new_price = original_price - 150`
-- ⚠️ هذه القاعدة الداخلية هي المرجع للسعر النهائي — سعر المنافس مرجعي فقط ولا يُستخدم في `new_price`.
-
-## تعليمات الإخراج
-- JSON صارم فقط، يبدأ بـ {{ وينتهي بـ }}
-- لا markdown، لا نص خارج JSON
-- products_updated: [] دائماً (لا تحديث للموجود)
-- جميع الأسعار بالريال السعودي
-"""
-
-# ─── COLUMN DETECTION ────────────────────────────────────────────────────────
-ARABIC_COL_KEYS = {
-    'name':          ['اسم المنتج', 'اسم'],
-    'type':          ['نوع المنتج'],
-    'category':      ['فئة المنتج', 'فئة'],
-    'images':        ['صورة المنتج', 'صورة'],
-    'option_name':   ['اسم خيار'],
-    'option_value':  ['اسم الخيار'],
-    'price':         ['سعر المنتج', 'سعر'],
-    'quantity':      ['الكمية'],
-    'description':   ['الوصف'],
-    'accepts_orders':['هل يقبل'],
-    'sku':           ['sku', 'رمز المنتج'],
-    'barcode':       ['الباركود', 'رمز الباركود'],
-    'brand':         ['الماركة'],
-    'status':        ['حالة المنتج', 'حالة'],
-}
-
-FALLBACK_POSITIONS = {
-    'name': 1, 'type': 2, 'category': 3, 'images': 4,
-    'price': 7, 'quantity': 8, 'description': 9,
-    'sku': 11, 'brand': 22, 'status': 24,
-}
-
-
-def _norm_ar(s: str) -> str:
-    s = str(s).strip().lower()
-    s = re.sub(r'[ً-ٰٟ]', '', s)
-    s = s.replace('أ', 'ا').replace('إ', 'ا').replace('آ', 'ا').replace('ٱ', 'ا')
-    s = s.replace('ى', 'ي').replace('ئ', 'ي')
-    s = s.replace('ة', 'ه')
-    s = re.sub(r'\s+', ' ', s)
-    return s
-
-
-def find_col(df: pd.DataFrame, key: str) -> str | None:
-    keywords = ARABIC_COL_KEYS.get(key, [])
-    EXCLUDE = {
-        'name':   ['خيار', 'option', '[1]', '[2]', '[3]'],
-        'price':  ['خيار', 'option', 'تكلفه', 'مخفض'],
-        'images': ['وصف صوره', 'وصف صورة'],
-    }
-    excludes = [_norm_ar(x) for x in EXCLUDE.get(key, [])]
-    cols_norm = [(col, _norm_ar(col)) for col in df.columns]
-
-    for kw in keywords:
-        kn = _norm_ar(kw)
-        for col, cn in cols_norm:
-            if cn == kn and not any(x in cn for x in excludes):
-                return col
-    for kw in keywords:
-        kn = _norm_ar(kw)
-        for col, cn in cols_norm:
-            if kn in cn and not any(x in cn for x in excludes):
-                return col
-    if key in FALLBACK_POSITIONS:
-        idx = FALLBACK_POSITIONS[key]
-        cols = list(df.columns)
-        if idx < len(cols):
-            return cols[idx]
-    return None
-
-
-def get_brand_col(df: pd.DataFrame) -> str | None:
-    col = find_col(df, 'brand')
-    if col:
-        return col
-    for c in df.columns:
-        sample = df[c].dropna().astype(str).head(30)
-        pipe_count = sample.str.contains(r'\|').sum()
-        avg_len = sample.str.len().mean()
-        if pipe_count > 5 and avg_len < 60:
-            return c
-    return None
-
-
-def is_tester(name: str) -> bool:
-    if not isinstance(name, str) or not name.strip():
-        return False
-    n = name.lower()
-    if any(t in n for t in ['tester', 'testr']):
-        return True
-    n_norm = re.sub(r'[أإآ]', 'ا', n)
-    return any(t in n_norm for t in ['تستر', 'تستير', 'تيستر'])
-
-
-# كلمات تدل على «طقم/مجموعة» (لا تستحق إضافة تستر)
-_SET_KEYWORDS_AR = (
-    'طقم', 'أطقم', 'اطقم', 'مجموعة', 'مجموعه', 'باكج', 'باقة', 'هدية',
-    'هديه', 'بوكس', 'كوليكشن',
-)
-_SET_KEYWORDS_EN = (
-    'set ', ' set', 'gift set', 'bundle', 'collection', 'box set', 'kit',
-    'pack', 'duo', 'trio',
-)
-# نمط للتعرف على أنماط مثل «3 قطع» / «4 قطع» / «قطعتين»
-_PIECES_RX = re.compile(r'\b\d+\s*قطع\b|قطعتين|قطعتان|\b\d+\s*pcs?\b', re.IGNORECASE)
-
-
-def is_set(name: str) -> bool:
-    """يتحقق ما إذا كان المنتج طقماً/مجموعة (لا يحتاج تستراً).
-
-    قواعد التحقق:
-      • وجود كلمة دالة على الطقم (طقم/مجموعة/set/kit/bundle…)
-      • نمط «N قطع» أو «N pcs»
-      • وجود علامة «+» تدل على دمج عدة منتجات في عرض واحد
-    """
-    if not isinstance(name, str) or not name.strip():
-        return False
-
-    n = name.strip()
-    n_lower = n.lower()
-    n_ar = re.sub(r'[أإآ]', 'ا', n_lower)
-
-    # 1) كلمات عربية
-    for kw in _SET_KEYWORDS_AR:
-        kw_norm = re.sub(r'[أإآ]', 'ا', kw)
-        if kw_norm in n_ar:
-            return True
-
-    # 2) كلمات إنجليزية (مع حدود الكلمات لتجنب false positives في duo→ مثلاً)
-    for kw in _SET_KEYWORDS_EN:
-        if kw.strip() in n_lower:
-            # تأكد إنها كلمة مستقلة وليست جزءاً من كلمة أكبر
-            if re.search(rf'\b{re.escape(kw.strip())}\b', n_lower):
-                return True
-
-    # 3) نمط «N قطع» / «N pcs»
-    if _PIECES_RX.search(n):
-        return True
-
-    # 4) علامة «+» في الاسم تدل على دمج عدة منتجات
-    if '+' in n:
-        return True
-
-    return False
-
-
-def _extract_size_for_grouping(name: str) -> int:
-    """يستخرج الحجم بالـ مل بشكل قوي (أكبر رقم متبوع بـ مل/ml يُعتبر الحجم).
-
-    مهم: نأخذ أكبر رقم لتفادي حالات مثل «1 مليون لاكي 100 مل» حيث «1»
-    ليست حجماً.
-    """
-    if not name:
-        return 0
-    matches = _SIZE_RX.findall(str(name))
-    if not matches:
-        return 0
-    sizes = []
-    for m in matches:
-        try:
-            sizes.append(int(float(str(m).replace(',', '.'))))
-        except (ValueError, TypeError):
-            continue
-    return max(sizes) if sizes else 0
-
-
-def calc_tester_price(original_price: float) -> float:
-    """قاعدة التسعير الداخلية للتسات: الأقل من 1000 ريال يخصم 70، والباقي 150."""
-    try:
-        p = float(original_price or 0)
-    except (TypeError, ValueError):
-        p = 0.0
-    if p >= 1000:
-        return max(p - 150, 0)
-    return max(p - 70, 0)
-
-
-def build_tester_name(base_name: str) -> str:
-    """يُنشئ اسم تستر صحيح من اسم العطر الأساسي.
-
-    قواعد التسمية المعتمدة:
-      • إذا بدأ الاسم بـ «عطر » فإن «عطر» تُستبدل بـ «تستر»
-      • وإلا تُوضع «تستر » في أول الاسم (وليس آخره)
-
-    أمثلة:
-      'عطر رابان مليون 90مل'  →  'تستر رابان مليون 90مل'
-      'باكو رابان فانتوم 100مل' → 'تستر باكو رابان فانتوم 100مل'
-
-    كما تُزيل أي ذيول تستر مكرّرة قد تكون مُلصقة من قبل.
-    """
-    if not base_name or not str(base_name).strip():
-        return 'تستر'
-
-    name = str(base_name).strip()
-
-    # 1) إن كانت الكلمة «تستر/تيستر/تستير/Tester» مُلصقة في النهاية، احذفها
-    name = re.sub(
-        r'\s*(?:تستر|تيستر|تستير|tester|testr)\s*$',
-        '',
-        name,
-        flags=re.IGNORECASE,
-    ).strip()
-
-    # إن لم يبقَ شيء (الاسم كان «تستر» وحدها)، أرجِعها
-    if not name:
-        return 'تستر'
-
-    # 2) لو بدأ الاسم بـ «عطر »، استبدلها بـ «تستر»
-    if re.match(r'^(?:عطر|العطر)\s+', name):
-        return re.sub(r'^(?:عطر|العطر)\s+', 'تستر ', name, count=1)
-
-    # 3) لو بدأ الاسم بـ «تستر » مسبقاً، رجّع الاسم كما هو
-    if re.match(r'^(?:تستر|تيستر|تستير|tester|testr)\s+', name, re.IGNORECASE):
-        return name
-
-    # 4) خلاف ذلك، ضع «تستر » في الأول
-    return f"تستر {name}"
-    return max(p - 70, 0)
-
-
-def load_products(file) -> pd.DataFrame:
-    name = file.name.lower()
-    if name.endswith('.csv'):
-        for enc in ['utf-8-sig', 'utf-8', 'cp1256']:
-            try:
-                file.seek(0)
-                df = pd.read_csv(file, encoding=enc)
-                break
-            except Exception:
-                continue
-    else:
-        file.seek(0)
-        df = pd.read_excel(file, header=1)
-        first_col = str(df.columns[0])
-        if first_col not in ('No.',) and not any(k in first_col for k in ['اسم', 'No']):
-            file.seek(0)
-            df = pd.read_excel(file, header=0)
-    return df
-
-
-def extract_writing_dna(df: pd.DataFrame, max_samples: int = 5) -> str:
-    name_col = find_col(df, 'name')
-    desc_col = find_col(df, 'description')
-    cat_col = find_col(df, 'category')
-    brand_col = get_brand_col(df)
-    price_col = find_col(df, 'price')
-
-    samples = []
-    if name_col and desc_col:
-        for _, row in df.iterrows():
-            name = str(row.get(name_col, ''))
-            desc = str(row.get(desc_col, ''))
-            if (not is_tester(name) and len(desc) > 200 and '<' in desc):
-                samples.append({
-                    'name': name,
-                    'brand': str(row.get(brand_col, '')) if brand_col else '',
-                    'category': str(row.get(cat_col, '')) if cat_col else '',
-                    'price': row.get(price_col, 0) if price_col else 0,
-                    'description_sample': desc[:800],
-                })
-            if len(samples) >= max_samples:
-                break
-
-    all_categories = []
-    if cat_col:
-        all_categories = sorted(df[cat_col].dropna().astype(str).unique().tolist())
-
-    dna = "## أسلوب الكتابة المُتَّبع في متجر مهووس (تعلّم منه ولا تخرج عنه)\n\n"
-    dna += "### التصنيفات المتاحة (استخدمها حرفياً):\n"
-    dna += "\n".join(f"- {c}" for c in all_categories) + "\n\n"
-    dna += "### أمثلة فعلية من أوصاف المنتجات (انسخ الأسلوب والتنسيق):\n"
-    for i, s in enumerate(samples, 1):
-        dna += (
-            f"\n--- مثال {i} ---\n"
-            f"الاسم: {s['name']}\n"
-            f"الماركة: {s['brand']}\n"
-            f"التصنيف: {s['category']}\n"
-            f"السعر: {s['price']} ريال\n"
-            f"مقطع من الوصف:\n{s['description_sample']}\n---\n"
-        )
-    return dna
-
-
-def extract_json(text: str) -> dict:
-    text = re.sub(r'^\s*```(?:json)?\s*\n?', '', text, flags=re.MULTILINE)
-    text = re.sub(r'\n?\s*```\s*$',          '', text, flags=re.MULTILINE)
+text = re.sub(r'\n?\s*```\s*$',          '', text, flags=re.MULTILINE)
     text = text.strip()
 
     start = text.find('{')
@@ -1110,6 +57,87 @@ def extract_json(text: str) -> dict:
     snippet = (cleaned2[:400] + '...') if len(cleaned2) > 400 else cleaned2
     raise ValueError(f"فشل تحليل JSON بعد كل المحاولات. المقتطف: {snippet!r}")
 
+
+def test_gemini_key(api_key: str, model_name: str = 'gemini-2.5-flash') -> tuple[bool, str]:
+    """يختبر مفتاح Gemini بطلب بسيط (5 توكن) للكشف المبكر عن المشاكل.
+
+    Returns:
+        (success, message) — message يحوي تشخيصاً عربياً مفصّلاً عند الفشل.
+    """
+    if not api_key or not api_key.strip():
+        return False, "⚠️ لم يُدخل مفتاح API"
+
+    if not api_key.startswith('AIza'):
+        return False, (
+            "⚠️ صيغة المفتاح غير صحيحة — مفاتيح Gemini تبدأ بـ 'AIza'. "
+            "تأكد من نسخ المفتاح كاملاً من Google AI Studio."
+        )
+
+    try:
+        client = genai.Client(api_key=api_key)
+        config = genai_types.GenerateContentConfig(
+            temperature=0.0, max_output_tokens=5,
+        )
+        resp = client.models.generate_content(
+            model=model_name, contents='test', config=config,
+        )
+        if resp.text:
+            return True, f"✅ المفتاح يعمل بنجاح مع {model_name}"
+        return False, "⚠️ المفتاح صحيح لكن الرد فارغ — جرّب موديلاً آخر"
+    except Exception as e:
+        err = str(e).lower()
+
+        # خطأ 403 PERMISSION_DENIED — المشروع محجوب
+        if ('403' in err and 'denied access' in err) or 'permission_denied' in err:
+            return False, (
+                "❌ **المشروع محجوب من Google** (403 PERMISSION_DENIED)\n\n"
+                "🔴 هذا الخطأ على مستوى حساب Google وليس في التطبيق.\n\n"
+                "**الأسباب الشائعة:**\n"
+                "• المفتاح تسرّب وحُجب تلقائياً (مثلاً ظهر على GitHub)\n"
+                "• المشروع محجوب على مستوى Google Cloud\n"
+                "• منطقتك تتطلب تفعيل Cloud Billing\n\n"
+                "**الحل (بالترتيب):**\n"
+                "1. اذهب إلى https://aistudio.google.com/apikey\n"
+                "2. احذف المفتاح الحالي تماماً\n"
+                "3. اضغط 'Create API Key' → 'Create in new project'\n"
+                "4. استخدم المفتاح الجديد هنا\n\n"
+                "إن استمرّ الخطأ، فعّل Billing من:\n"
+                "https://console.cloud.google.com/billing"
+            )
+
+        # خطأ 401 / مفتاح غير صحيح
+        if '401' in err or 'unauthenticated' in err or 'invalid api' in err or 'api_key_invalid' in err:
+            return False, (
+                "❌ **المفتاح غير صحيح أو منتهٍ**\n\n"
+                "تحقق من:\n"
+                "• نسخت المفتاح كاملاً بدون فراغات في الأطراف\n"
+                "• المفتاح لم يُحذف من Google AI Studio\n"
+                "• اذهب إلى https://aistudio.google.com/apikey وأنشئ مفتاحاً جديداً"
+            )
+
+        # خطأ تسريب
+        if 'leaked' in err or 'reported as leaked' in err:
+            return False, (
+                "❌ **المفتاح مُبلَّغ عنه كمُسرَّب**\n\n"
+                "Google رصدت هذا المفتاح في مكان عام (مثل GitHub) وحجبته.\n"
+                "أنشئ مفتاحاً جديداً من https://aistudio.google.com/apikey\n"
+                "وتأكد ألا تُضيفه أبداً لأي ملف يُرفع إلى مستودع عام."
+            )
+
+        # خطأ حصة
+        if '429' in err or 'quota' in err or 'resource_exhausted' in err:
+            return False, (
+                "⚠️ **تجاوزت حصة الاستخدام**\n\n"
+                "انتظر دقيقة وأعد المحاولة، أو جرّب موديل 'gemini-2.5-flash-lite' "
+                "(حصته أكبر بـ 4 مرات)."
+            )
+
+        # خطأ شبكة
+        if 'connection' in err or 'timeout' in err or 'network' in err:
+            return False, f"⚠️ مشكلة اتصال بالإنترنت: {e}"
+
+        # غير معروف
+        return False, f"❌ خطأ غير متوقع: {e}"
 
 # ═════════════════════════════════════════════════════════════════════════════
 #  محرّك التطبيع والمقارنة التقريبية (Fuzzy Matching)
@@ -1184,7 +212,7 @@ def _normalize_perfume_name(name: str) -> str:
     s = str(name).lower().strip()
     s = re.sub(r'[\u064b-\u065f\u0670]', '', s)
     s = (s.replace('أ', 'ا').replace('إ', 'ا').replace('آ', 'ا').replace('ٱ', 'ا')
-           .replace('ى', 'ي').replace('ة', 'ه'))
+            .replace('ى', 'ي').replace('ة', 'ه'))
     s = _SIZE_RX.sub(' ', s)
     s = re.sub(r'\b\d+\b', ' ', s)
     for phrase, repl in _LAT_PHRASES:
@@ -1502,7 +530,7 @@ def ensure_all_testers_added(result: dict, products_payload: list) -> dict:
         except (TypeError, ValueError):
             bp_price = 0.0
 
-        # 🖼️ احتفظ بقائمة الصور كاملة (مفصولة بفواصل) — Salla يدعم صور متعددة
+        # 🖼️ احتفظ بقائمة الصور كاملة (مفصولة بفاصلة) — Salla يدعم صور متعددة
         raw_img = (bp.get('image_url') or '').strip()
         # نظّف ونزّل الفواصل
         if raw_img:
@@ -1692,7 +720,7 @@ def call_gemini_brand(
      * `new_description`: قالب التستر مكتملاً
      * `seo_title` و `seo_description`: قصيران ومحسّنان
 
-   - 🔴 **لا تتجاوز هذه الخطوة أبداً** — كل عطر بلا تستر **يجب** أن يحصل على تستر، حتى لو لم تجد التستر عند أي منافس. ضع `competitor_price=0` و `tester_available_in_market=false` و `source_store=""` وأضفه.
+   - 🔴 **لا تتجاوز هذه الخطوة أبداً** — كل عطر بلا تستر **يجب** يحصل على تستر، حتى لو لم تجد التستر عند أي منافس. ضع `competitor_price=0` و `tester_available_in_market=false` و `source_store=""` وأضفه.
 
 ## المهمة 2: التساتر التي ليس لها عطر أساسي (Orphan Testers)
 لكل تستر في "التساتر الموجودة":
@@ -1935,7 +963,7 @@ def _norm_hdr(s) -> str:
     """تطبيع رؤوس الأعمدة للمقارنة."""
     s = str(s).strip()
     s = (s.replace('أ', 'ا').replace('إ', 'ا').replace('آ', 'ا')
-           .replace('ى', 'ي').replace('ة', 'ه'))
+            .replace('ى', 'ي').replace('ة', 'ه'))
     s = re.sub(r'\s+', ' ', s)
     return s
 
@@ -2310,6 +1338,16 @@ with st.sidebar:
     )
     st.session_state.api_key = api_key
 
+    # ⭐ زر اختبار المفتاح — يكشف خطأ 403 قبل بدء المعالجة الطويلة
+    if api_key:
+        if st.button("🔬 اختبار المفتاح", use_container_width=True):
+            with st.spinner("جاري الاختبار..."):
+                ok, msg = test_gemini_key(api_key, st.session_state.get('model_name', 'gemini-2.5-flash'))
+                if ok:
+                    st.success(msg)
+                else:
+                    st.error(msg)
+
     # 📋 قائمة نماذج Gemini (محدّثة آخر تحديث: مايو 2026 من توثيق Google الرسمي)
     # https://ai.google.dev/gemini-api/docs/models
     #
@@ -2325,16 +1363,16 @@ with st.sidebar:
         "🤖 النموذج",
         [
             # ─── Stable / Production-ready (موصى بها) ───
-            'gemini-2.5-flash',           # ⭐ الأفضل توازناً (الافتراضي)
-            'gemini-2.5-flash-lite',      # أسرع وأرخص لكن أقل دقة
-            'gemini-2.5-pro',             # أعلى دقة، حصة أقل (5 RPM)
+            'gemini-2.5-flash',            # ⭐ الأفضل توازناً (الافتراضي)
+            'gemini-2.5-flash-lite',       # أسرع وأرخص لكن أقل دقة
+            'gemini-2.5-pro',              # أعلى دقة، حصة أقل (5 RPM)
             # ─── Latest aliases (تتحدّث تلقائياً) ───
-            'gemini-flash-latest',        # alias لأحدث Flash مستقر
-            'gemini-pro-latest',          # alias لأحدث Pro مستقر
+            'gemini-flash-latest',         # alias لأحدث Flash مستقر
+            'gemini-pro-latest',           # alias لأحدث Pro مستقر
             # ─── Preview (يتطلب Cloud Billing) ───
-            'gemini-3-flash',             # أحدث جيل، سرعة عالية
-            'gemini-3.1-pro-preview',     # أدق نموذج (Preview)
-            'gemini-3-flash-lite',        # الأرخص في الجيل الجديد
+            'gemini-3-flash',              # أحدث جيل، سرعة عالية
+            'gemini-3.1-pro-preview',      # أدق نموذج (Preview)
+            'gemini-3-flash-lite',         # الأرخص في الجيل الجديد
         ],
         index=0,  # 2.5-flash هو الافتراضي (الأكثر استقراراً)
         help=(
@@ -3004,7 +2042,7 @@ try:
         try:
             accumulated = enrich_auto_added_testers(
                 accumulated,
-                brand_name=brand,
+                brand_name=current_brand,
                 api_key=api_key,
                 model_name=model_name,
                 batch_size=8,
@@ -3056,14 +2094,51 @@ except Exception as e:
     err = str(e)
     brand_bar.progress(0)
 
-    if 'api_key' in err.lower() or 'api key' in err.lower() or 'invalid' in err.lower():
-        status_msg.error("❌ Gemini API Key غير صحيح — تحقق من المفتاح في الشريط الجانبي")
+    err_low = err.lower()
+
+    if ('403' in err_low and 'denied access' in err_low) or 'permission_denied' in err_low:
+        status_msg.error("❌ **المشروع محجوب من Google** (403 PERMISSION_DENIED)")
+        with st.expander("🔍 كيف أحل هذه المشكلة؟", expanded=True):
+            st.markdown("""
+            **هذا الخطأ على مستوى حساب Google — ليس في التطبيق.**
+
+            **الأسباب الشائعة:**
+            - المفتاح تسرّب وحُجب تلقائياً (مثلاً ظهر على GitHub)
+            - المشروع محجوب على مستوى Google Cloud
+            - منطقتك تتطلب تفعيل Cloud Billing
+
+            **الحل (جرّب بالترتيب):**
+            1. افتح [Google AI Studio API Keys](https://aistudio.google.com/apikey)
+            2. **احذف** المفتاح الحالي تماماً
+            3. اضغط **Create API Key** → **Create in new project**
+            4. انسخ المفتاح الجديد إلى الشريط الجانبي
+            5. اضغط 🔬 اختبار المفتاح للتأكد قبل المعالجة
+
+            إن استمرّ الخطأ بعد المفتاح الجديد:
+            - فعّل Billing على المشروع من [Google Cloud Console](https://console.cloud.google.com/billing) (مجاني ضمن Free Tier)
+            - تأكد ألا تُضيف المفتاح لأي ملف يُرفع إلى GitHub
+            """)
         st.session_state.processing = False
-    elif 'quota' in err.lower() or 'rate' in err.lower() or '429' in err:
-        status_msg.error("❌ تجاوز حد الاستخدام (Rate Limit) — انتظر دقيقة وأعد المحاولة")
+
+    elif 'leaked' in err_low or 'reported as leaked' in err_low:
+        status_msg.error("❌ **المفتاح مُبلَّغ عنه كمُسرَّب** — Google حجبته تلقائياً")
+        st.info("أنشئ مفتاحاً جديداً من https://aistudio.google.com/apikey")
         st.session_state.processing = False
+
+    elif 'api_key' in err_low or 'api key' in err_low or 'unauthenticated' in err_low or '401' in err_low:
+        status_msg.error("❌ **مفتاح Gemini غير صحيح** — تحقق من نسخه كاملاً بدون فراغات")
+        st.session_state.processing = False
+
+    elif 'quota' in err_low or 'rate' in err_low or '429' in err or 'resource_exhausted' in err_low:
+        status_msg.error("❌ **تجاوزت حد الاستخدام** — انتظر دقيقة أو جرّب موديل gemini-2.5-flash-lite")
+        st.session_state.processing = False
+
+    elif 'safety' in err_low or 'حُجبت' in err:
+        status_msg.error("❌ **حُجب الرد بفلتر الأمان** — راجع المنتجات لكلمات حساسة")
+        st.session_state.processing = False
+
     else:
-        status_msg.error(f"❌ خطأ: {err}")
+        status_msg.error(f"❌ خطأ غير متوقع: {err}")
         st.session_state.processing = False
 
     col_retry, col_skip2 = st.columns(2)
