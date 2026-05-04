@@ -686,7 +686,8 @@ SYSTEM_INSTRUCTION_TEMPLATE = """## هويتك ومهمتك
 
 **🛑 استثناءات مهمة (لا تُضِف تستراً لها أبداً):**
 1. **الأطقم/المجموعات**: أي منتج يحتوي اسمه على «طقم/أطقم/مجموعة/Set/Kit/Bundle/Collection/Box» أو «N قطع» (مثل: "3 قطع") أو رمز «+» الذي يدل على دمج عدة منتجات. مثال يجب تجاهله: "مجموعة باكو رابان مليون جولد للنساء 3 قطع".
-2. **الأحجام الصغيرة المكررة**: إذا كان نفس العطر موجوداً بأحجام متعددة (مثل 100مل و50مل لنفس الإصدار)، أضف تستراً **فقط للحجم الأكبر**. تجاهل الأحجام الأصغر تماماً.
+2. **البدائل (Alternatives/Dupes)**: أي منتج يحتوي اسمه على «بديل/البديل/مشابه/شبيه/مستوحى/مقلد/تقليد/alternative/dupe/inspired by/clone/replica». البدائل بحدّ ذاتها نسخ اقتصادية مستوحاة من العطور الأصلية، فلا تحتاج تستراً. مثال يجب تجاهله: "بديل لافيرا".
+3. **الأحجام الصغيرة المكررة**: إذا كان نفس العطر موجوداً بأحجام متعددة (مثل 100مل و50مل لنفس الإصدار)، أضف تستراً **فقط للحجم الأكبر**. تجاهل الأحجام الأصغر تماماً.
 
 **القاعدة 1 — فحص وجود التستر:**
 - لكل عطر أساسي *مؤهل* في قائمتنا (ليس طقماً، وهو الحجم الأكبر لإصداره)، تحقق: هل يوجد منتج آخر في القائمة يحتوي اسمه على "تستر" أو "Tester" لنفس العطر؟
@@ -908,6 +909,47 @@ def is_set(name: str) -> bool:
     # 4) علامة «+» في الاسم تدل على دمج عدة منتجات
     if '+' in n:
         return True
+
+    return False
+
+
+# كلمات تدل على «بديل» (نسخة مشابهة/مقلدة — لا تحتاج تستراً)
+_ALTERNATIVE_KEYWORDS_AR = (
+    'بديل', 'البديل', 'بدائل', 'مشابه', 'مشابهه', 'شبيه', 'شبيهه',
+    'مستوحى', 'مستوحاه', 'مستوحاة', 'مقلد', 'تقليد',
+)
+# ⚠️ مهم: لا نُضمّن "replica" أو "inspired" المنفردة لأنهما قد تتطابقان مع
+# ماركات حقيقية (مثل Maison Margiela Replica) أو أوصاف تسويقية شرعية.
+# نكتفي بالعبارات المركبة الواضحة فقط.
+_ALTERNATIVE_KEYWORDS_EN = (
+    'alternative', 'dupe', 'inspired by', 'similar to', 'clone of',
+)
+
+
+def is_alternative(name: str) -> bool:
+    """يتحقق ما إذا كان المنتج «بديلاً» (نسخة مشابهة/مقلدة).
+
+    منتجات «البديل» في متجر مهووس هي نسخ مستوحاة من العطور الأصلية —
+    وهي بحد ذاتها بدائل اقتصادية لا تحتاج إلى تستر.
+    """
+    if not isinstance(name, str) or not name.strip():
+        return False
+
+    n = name.strip()
+    n_lower = n.lower()
+    n_ar = re.sub(r'[أإآ]', 'ا', n_lower)
+
+    # 1) كلمات عربية — نتحقق بحدود الكلمات لتفادي تطابق جزئي
+    for kw in _ALTERNATIVE_KEYWORDS_AR:
+        kw_norm = re.sub(r'[أإآ]', 'ا', kw)
+        # نبحث عن الكلمة كاملة (بحدود مسافة أو بداية/نهاية)
+        if re.search(rf'(?:^|\s|\(|\[){re.escape(kw_norm)}(?:\s|\)|\]|$)', n_ar):
+            return True
+
+    # 2) كلمات إنجليزية
+    for kw in _ALTERNATIVE_KEYWORDS_EN:
+        if re.search(rf'\b{re.escape(kw)}\b', n_lower):
+            return True
 
     return False
 
@@ -1480,12 +1522,13 @@ def ensure_all_testers_added(result: dict, products_payload: list) -> dict:
         return result
 
     # افصل العطور الأساسية عن التساتر الموجودة في القائمة الأصلية
-    # ⚠️ نستثني الأطقم/المجموعات: لا نضيف تستر للأطقم.
+    # ⚠️ نستثني الأطقم/المجموعات والبدائل: لا نضيف تستر لها.
     base_perfumes = [
         p for p in products_payload
         if isinstance(p, dict)
         and not is_tester(p.get('name', ''))
         and not is_set(p.get('name', ''))
+        and not is_alternative(p.get('name', ''))
     ]
     existing_tester_products = [
         p for p in products_payload
@@ -2107,6 +2150,11 @@ def build_output_excel(result: dict, original_df: pd.DataFrame, template_bytes: 
             skipped_sets += 1
             continue
 
+        # 🛑 لا تُضِف تستراً لمنتج «بديل» (نسخة مشابهة لا تحتاج تستر)
+        if is_alternative(t_name):
+            skipped_sets += 1
+            continue
+
         # 🛡️ حماية نهائية: تخطّ التساتر التي تطابق منتجاً موجوداً (Gemini ربما
         # اقترحت تستراً لمنتج له تستر مماثل في القائمة الأصلية).
         t_sk = _normalize_perfume_name(_strip_tester_keyword(t_name))
@@ -2183,6 +2231,11 @@ def build_output_excel(result: dict, original_df: pd.DataFrame, template_bytes: 
 
         # 🛑 لا تُضِف طقماً/مجموعة من missing_products
         if is_set(m_name):
+            skipped_sets += 1
+            continue
+
+        # 🛑 لا تُضِف منتج «بديل» من missing_products
+        if is_alternative(m_name):
             skipped_sets += 1
             continue
 
