@@ -64,6 +64,24 @@ COMPETITOR_STORES = [
     "https://haraj.com.sa/", "https://shukran.com/",
 ]
 
+# ─── INTERNAL CATEGORY LINKS (Salla / mahwous.com) ───────────────────────────
+# روابط التصنيفات الداخلية الفعلية في متجر مهووس على منصة سلة.
+# هذه الثوابت تُستخدم في قوالب HTML للوصف لتوجيه العميل لتصفح أقسام أخرى.
+# مأخوذة مباشرة من ملف تصنيفات المتجر الذي رفعه صاحب المتجر.
+
+# تساتر — التصنيفات الفرعية المُخصّصة للتساتر
+LINK_TESTER_NEW    = 'https://mahwous.com/عطور-التستر-جديدة/c45657635'
+LINK_TESTER_MEN    = 'https://mahwous.com/تستر-رجالية/c620175943'
+LINK_TESTER_WOMEN  = 'https://mahwous.com/عطور-التستر-نسائية/c734563747'
+LINK_TESTER_NICHE  = 'https://mahwous.com/عطور-التستر-النيش/c982545835'
+LINK_TESTER_ALL    = 'https://mahwous.com/redirect/categories/1852111997'
+
+# عطور أساسية — تصنيفات رئيسية
+LINK_PERFUMES_MEN     = 'https://mahwous.com/عطور-رجالية/c592918872'
+LINK_PERFUMES_WOMEN   = 'https://mahwous.com/redirect/categories/1119010419'
+LINK_PERFUMES_NICHE   = 'https://mahwous.com/عطور-النيش/c943790974'
+LINK_PERFUMES_NEW_MEN = 'https://mahwous.com/عطور-رجالية-جديدة/c1412200665'
+
 # ─── HTML TEMPLATES ──────────────────────────────────────────────────────────
 HTML_TEMPLATE_NEW = (
     '<p><strong>[مقدمة تسويقية جذابة]</strong></p>'
@@ -95,9 +113,9 @@ HTML_TEMPLATE_NEW = (
     '<p><strong>ما هي المناسبة الأفضل لاستخدامه؟</strong><br>[إجابة]</p>'
     '<h3>اكتشف المزيد من مهووس</h3>'
     '<ul>'
-      '<li><a href="/categories/perfumes-men">استكشف أحدث العطور الرجالية</a></li>'
-      '<li><a href="/categories/perfumes-women">تصفح أجمل العطور النسائية الجذابة</a></li>'
-      '<li><a href="/categories/niche-perfumes">للباحثين عن التميز، استكشف عطور النيش الفاخرة</a></li>'
+      f'<li><a href="{LINK_PERFUMES_MEN}">استكشف أحدث العطور الرجالية</a></li>'
+      f'<li><a href="{LINK_PERFUMES_WOMEN}">تصفح أجمل العطور النسائية الجذابة</a></li>'
+      f'<li><a href="{LINK_PERFUMES_NICHE}">للباحثين عن التميز، استكشف عطور النيش الفاخرة</a></li>'
     '</ul>'
 )
 
@@ -161,12 +179,12 @@ HTML_TEMPLATE_TESTER = (
     'المطلقة براحة بال تامة.</p>'
     '<h3>اكتشف المزيد من مهووس</h3>'
     '<ul>'
-      '<li><a href="/categories/testers">تصفح تشكيلتنا الواسعة من التساتر '
+      f'<li><a href="{LINK_TESTER_ALL}">تصفح تشكيلتنا الواسعة من التساتر '
       'الأصلية</a></li>'
-      '<li><a href="/categories/niche-perfumes-men">تسوق المزيد من إصدارات '
-      'النيش الرجالية الفاخرة</a></li>'
-      '<li><a href="/categories/niche-perfumes-women">اكتشف أحدث إصدارات '
-      'النيش النسائية</a></li>'
+      f'<li><a href="{LINK_TESTER_NEW}">عطور التستر الجديدة — أحدث الإصدارات</a></li>'
+      f'<li><a href="{LINK_TESTER_MEN}">تسوق عطور التستر الرجالية الفاخرة</a></li>'
+      f'<li><a href="{LINK_TESTER_WOMEN}">اكتشف عطور التستر النسائية الجذابة</a></li>'
+      f'<li><a href="{LINK_TESTER_NICHE}">للمميزين، استكشف عطور التستر النيش</a></li>'
     '</ul>'
 )
 
@@ -660,12 +678,12 @@ def fill_tester_template_complete(
         f'بنسبة 100% — من نفس الموزعين المعتمدين للماركات العالمية.</p>'
         f'<h3>اكتشف المزيد من مهووس</h3>'
         f'<ul>'
-          f'<li><a href="/categories/testers">تصفح تشكيلتنا الواسعة من '
+          f'<li><a href="{LINK_TESTER_ALL}">تصفح تشكيلتنا الواسعة من '
           f'التساتر الأصلية</a></li>'
-          f'<li><a href="/categories/niche-perfumes-men">تسوق المزيد من '
-          f'إصدارات النيش الرجالية الفاخرة</a></li>'
-          f'<li><a href="/categories/niche-perfumes-women">اكتشف أحدث '
-          f'إصدارات النيش النسائية</a></li>'
+          f'<li><a href="{LINK_TESTER_NEW}">عطور التستر الجديدة — أحدث الإصدارات</a></li>'
+          f'<li><a href="{LINK_TESTER_MEN}">تسوق عطور التستر الرجالية الفاخرة</a></li>'
+          f'<li><a href="{LINK_TESTER_WOMEN}">اكتشف عطور التستر النسائية الجذابة</a></li>'
+          f'<li><a href="{LINK_TESTER_NICHE}">للمميزين، استكشف عطور التستر النيش</a></li>'
         f'</ul>'
     )
     return html
