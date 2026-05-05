@@ -1815,6 +1815,350 @@ def filter_external_missing_products(missing_products: list,
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+#  Deep Exhaustive Scanner — مسح متسلسل صارم لكل منتج × كل متجر منافس
+#  يعتمد على: fetch_market_data, _normalize_perfume_name, _name_similarity,
+#             _extract_price_from_text, COMPETITOR_STORES
+# ═════════════════════════════════════════════════════════════════════════════
+
+import urllib.parse as _urlparse
+
+DEEP_SCAN_REQUEST_DELAY = 0.5
+DEEP_SCAN_PER_STORE_TIMEOUT = 15
+DEEP_SCAN_SIMILARITY_THRESHOLD = 0.85
+DEEP_SCAN_RESULTS_PER_STORE = 5
+DEEP_SCAN_TESTER_KEYWORDS = (
+    "tester", "Tester", "TESTER", "تستر", "تيستر", "تستير",
+)
+
+
+def _competitor_domain(store_url: str) -> str:
+    if not store_url:
+        return ""
+    try:
+        parsed = _urlparse.urlparse(
+            store_url if "://" in store_url else f"https://{store_url}"
+        )
+        host = (parsed.netloc or parsed.path or "").strip().lower()
+        if host.startswith("www."):
+            host = host[4:]
+        return host.split("/")[0]
+    except Exception as e:
+        logger.warning("فشل تحليل رابط منافس %r: %s", store_url, e)
+        return ""
+
+
+def _serper_search_single_store(query: str, domain: str, api_key: str,
+                                num_results: int = DEEP_SCAN_RESULTS_PER_STORE
+                                ) -> list:
+    """استدعاء Serper مقيّد بنطاق متجر واحد. لا يرفع استثناءات."""
+    if not query or not domain or not api_key:
+        return []
+    payload = {
+        "q": f"{str(query).strip()} site:{domain}",
+        "gl": "sa",
+        "hl": "ar",
+        "num": int(num_results),
+    }
+    headers = {"X-API-KEY": api_key, "Content-Type": "application/json"}
+    try:
+        resp = requests.post(
+            SERPER_ENDPOINT,
+            headers=headers,
+            data=json.dumps(payload),
+            timeout=DEEP_SCAN_PER_STORE_TIMEOUT,
+        )
+        resp.raise_for_status()
+        data = resp.json() or {}
+    except requests.exceptions.Timeout:
+        logger.warning("DeepScan timeout: %s @ %s", query, domain)
+        return []
+    except requests.exceptions.HTTPError as e:
+        status = getattr(getattr(e, "response", None), "status_code", "?")
+        logger.warning("DeepScan HTTP %s: %s @ %s", status, query, domain)
+        return []
+    except (requests.exceptions.RequestException, ValueError) as e:
+        logger.warning("DeepScan request failed (%s @ %s): %s", query, domain, e)
+        return []
+    except Exception as e:
+        logger.error("DeepScan unexpected error (%s @ %s): %s", query, domain, e)
+        return []
+
+    organic = data.get("organic", []) or []
+    out = []
+    for item in organic:
+        try:
+            title = (item.get("title") or "").strip()
+            link = (item.get("link") or "").strip()
+            snippet = (item.get("snippet") or "").strip()
+            if not title or not link or domain not in link:
+                continue
+            price = (
+                _extract_price_from_text(snippet)
+                or _extract_price_from_text(title)
+                or _extract_price_from_text(item.get("price"))
+            )
+            out.append({
+                "name": title,
+                "price": float(price) if price is not None else None,
+                "url": link,
+                "snippet": snippet,
+                "source": domain,
+            })
+        except Exception as e:
+            logger.warning("تخطي عنصر Serper فاسد (%s): %s", domain, e)
+            continue
+    return out
+
+
+def _is_tester_listing(name: str, snippet: str = "") -> bool:
+    blob = f"{name or ''} {snippet or ''}".lower()
+    return any(kw.lower() in blob for kw in DEEP_SCAN_TESTER_KEYWORDS)
+
+
+def _name_matches_target(candidate_name: str, target_name: str,
+                         brand_name: str = "",
+                         threshold: float = DEEP_SCAN_SIMILARITY_THRESHOLD
+                         ) -> bool:
+    cand_sk = _normalize_perfume_name(candidate_name)
+    targ_sk = _normalize_perfume_name(target_name)
+    if not cand_sk or not targ_sk:
+        return False
+    if _name_similarity(cand_sk, targ_sk) >= threshold:
+        return True
+    if brand_name:
+        combo_sk = _normalize_perfume_name(f"{brand_name} {target_name}")
+        if combo_sk and _name_similarity(cand_sk, combo_sk) >= threshold:
+            return True
+    return False
+
+
+def deep_market_scanner(perfume_name: str,
+                        brand_name: str,
+                        api_key: str,
+                        competitors_list: list) -> dict:
+    """يمسح المنتج الواحد عبر كل متجر منافس بشكل متسلسل ويستخرج سعر التستر."""
+    result = {
+        "perfume_name": perfume_name,
+        "brand_name": brand_name,
+        "tester_available_in_market": False,
+        "tester_price": None,
+        "tester_source_store": "",
+        "tester_url": "",
+        "matches": [],
+        "stores_scanned": 0,
+        "stores_with_hits": 0,
+    }
+
+    if not perfume_name or not api_key or not competitors_list:
+        logger.warning("deep_market_scanner: مدخلات ناقصة لـ %r", perfume_name)
+        return result
+
+    cheapest_tester = None
+    queries = [
+        f"{brand_name} {perfume_name} تستر".strip(),
+        f"{brand_name} {perfume_name}".strip(),
+    ]
+
+    for store_url in competitors_list:
+        domain = _competitor_domain(store_url)
+        if not domain:
+            continue
+        result["stores_scanned"] += 1
+        store_had_hit = False
+
+        for q in queries:
+            try:
+                hits = _serper_search_single_store(q, domain, api_key)
+            except Exception as e:
+                logger.error("DeepScan store loop error (%s): %s", domain, e)
+                hits = []
+            finally:
+                try:
+                    time.sleep(DEEP_SCAN_REQUEST_DELAY)
+                except Exception:
+                    pass
+
+            for h in hits:
+                try:
+                    if not _name_matches_target(
+                        h.get("name", ""), perfume_name, brand_name
+                    ):
+                        continue
+                    is_tester = _is_tester_listing(
+                        h.get("name", ""), h.get("snippet", "")
+                    )
+                    result["matches"].append({
+                        "name": h.get("name", ""),
+                        "price": h.get("price"),
+                        "url": h.get("url", ""),
+                        "source_store": domain,
+                        "is_tester": is_tester,
+                    })
+                    store_had_hit = True
+
+                    if is_tester and isinstance(h.get("price"), (int, float)):
+                        price_val = float(h["price"])
+                        if price_val > 0 and (
+                            cheapest_tester is None
+                            or price_val < cheapest_tester[0]
+                        ):
+                            cheapest_tester = (
+                                price_val, domain, h.get("url", ""),
+                            )
+                except Exception as e:
+                    logger.warning(
+                        "DeepScan match-eval error (%s): %s", domain, e
+                    )
+                    continue
+
+        if store_had_hit:
+            result["stores_with_hits"] += 1
+
+    if cheapest_tester is not None:
+        price_val, domain, url = cheapest_tester
+        result["tester_available_in_market"] = True
+        result["tester_price"] = round(price_val, 2)
+        result["tester_source_store"] = domain
+        result["tester_url"] = url
+
+    logger.info(
+        "DeepScan '%s': %d متجر، %d إصابة، tester=%s @ %s",
+        perfume_name, result["stores_scanned"], result["stores_with_hits"],
+        result["tester_price"], result["tester_source_store"],
+    )
+    return result
+
+
+def discover_missing_brand_products(brand_name: str,
+                                    api_key: str,
+                                    competitors_list: list,
+                                    existing_products: list,
+                                    similarity_threshold: float =
+                                    DEEP_SCAN_SIMILARITY_THRESHOLD) -> list:
+    """يكتشف منتجات الماركة عند المنافسين والمفقودة لدينا، مع منع تكرار صارم."""
+    if not brand_name or not api_key or not competitors_list:
+        logger.warning("discover_missing_brand_products: مدخلات ناقصة.")
+        return []
+
+    existing_skeletons = []
+    for p in (existing_products or []):
+        try:
+            sk = _normalize_perfume_name(p.get("name", ""))
+            if sk:
+                existing_skeletons.append(sk)
+        except Exception:
+            continue
+
+    discovered: list = []
+    seen_skeletons: list = []
+    queries = [
+        f"عطر {brand_name}",
+        f"{brand_name} perfume",
+        f"تستر {brand_name}",
+        f"{brand_name} tester",
+    ]
+    brand_sk = _normalize_perfume_name(brand_name)
+
+    for store_url in competitors_list:
+        domain = _competitor_domain(store_url)
+        if not domain:
+            continue
+
+        for q in queries:
+            try:
+                hits = _serper_search_single_store(q, domain, api_key)
+            except Exception as e:
+                logger.error("Discover store loop error (%s): %s", domain, e)
+                hits = []
+            finally:
+                try:
+                    time.sleep(DEEP_SCAN_REQUEST_DELAY)
+                except Exception:
+                    pass
+
+            for h in hits:
+                try:
+                    cand_name = (h.get("name") or "").strip()
+                    if not cand_name:
+                        continue
+                    cand_sk = _normalize_perfume_name(cand_name)
+                    if not cand_sk or len(cand_sk) < 3:
+                        continue
+
+                    if brand_sk and brand_sk not in cand_sk:
+                        if _name_similarity(brand_sk, cand_sk) < 0.40:
+                            continue
+
+                    max_sim = 0.0
+                    for ek in existing_skeletons:
+                        sim = _name_similarity(cand_sk, ek)
+                        if sim > max_sim:
+                            max_sim = sim
+                            if max_sim >= similarity_threshold:
+                                break
+                    if max_sim >= similarity_threshold:
+                        continue
+
+                    is_internal_dup = False
+                    for prev_sk in seen_skeletons:
+                        if _name_similarity(cand_sk, prev_sk) >= similarity_threshold:
+                            is_internal_dup = True
+                            break
+                    if is_internal_dup:
+                        continue
+
+                    seen_skeletons.append(cand_sk)
+                    discovered.append({
+                        "name": cand_name,
+                        "price": h.get("price"),
+                        "url": h.get("url", ""),
+                        "source_store": domain,
+                        "is_tester": _is_tester_listing(
+                            cand_name, h.get("snippet", "")
+                        ),
+                        "similarity_to_existing": round(max_sim, 3),
+                    })
+                except Exception as e:
+                    logger.warning(
+                        "Discover candidate error (%s): %s", domain, e
+                    )
+                    continue
+
+    logger.info(
+        "Discover '%s': %d منتج ناقص بعد تصفية التكرار",
+        brand_name, len(discovered),
+    )
+    return discovered
+
+
+def deep_scan_brand_catalog(brand_name: str,
+                            perfumes: list,
+                            api_key: str,
+                            competitors_list: list,
+                            progress_cb=None) -> dict:
+    """يطبّق deep_market_scanner على كل عطر بالتسلسل."""
+    out = {}
+    total = len(perfumes or [])
+    for idx, p in enumerate(perfumes or []):
+        try:
+            pname = (p.get("name") if isinstance(p, dict) else str(p)) or ""
+            if not pname.strip():
+                continue
+            if callable(progress_cb):
+                try:
+                    progress_cb(idx + 1, total, pname)
+                except Exception:
+                    pass
+            out[pname] = deep_market_scanner(
+                pname, brand_name, api_key, competitors_list
+            )
+        except Exception as e:
+            logger.error("deep_scan_brand_catalog error @ '%s': %s", p, e)
+            continue
+    return out
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 #  ⭐ شبكة الأمان: ضمان وجود تستر لكل عطر أساسي بدون تستر
 # ═════════════════════════════════════════════════════════════════════════════
 
@@ -2756,6 +3100,7 @@ def init_state():
         'current_result': None,
         'template_bytes': None,
         'api_key': os.environ.get('GEMINI_API_KEY', ''),
+        'serper_api_key': os.environ.get('SERPER_API_KEY', ''),
         'model_name': 'gemini-2.5-flash',
     }
     for k, v in defaults.items():
@@ -2777,6 +3122,15 @@ with st.sidebar:
         help="احصل على مفتاحك من Google AI Studio",
     )
     st.session_state.api_key = api_key
+
+    serper_api_key = st.text_input(
+        "🔎 Serper.dev API Key",
+        value=st.session_state.serper_api_key,
+        type="password",
+        placeholder="serper key...",
+        help="مفتاح Serper.dev — مطلوب للمسح العميق في متاجر المنافسين",
+    )
+    st.session_state.serper_api_key = serper_api_key
 
     # ⭐ زر اختبار المفتاح — يكشف 403 وأخطاء أخرى قبل بدء المعالجة الطويلة
     if api_key:
@@ -3299,6 +3653,64 @@ if name_col:
         })
 
 n = len(products_payload)
+
+# ─── Deep Exhaustive Scan (Serper) — منتج × متجر بالتسلسل ─────────────────────
+_serper_key = (st.session_state.get('serper_api_key') or '').strip()
+if _serper_key and products_payload:
+    try:
+        brand_lbl.markdown(
+            f"**مسح عميق:** فحص {n} منتج عبر {len(COMPETITOR_STORES)} متجر منافس..."
+        )
+        scan_progress = st.progress(0)
+        scan_status = st.empty()
+
+        def _scan_cb(i, t, name):
+            try:
+                scan_progress.progress(min(i / max(t, 1), 1.0))
+                scan_status.markdown(f"🔍 ({i}/{t}) {name}")
+            except Exception:
+                pass
+
+        deep_scan_results = deep_scan_brand_catalog(
+            brand_name=current_brand,
+            perfumes=products_payload,
+            api_key=_serper_key,
+            competitors_list=COMPETITOR_STORES,
+            progress_cb=_scan_cb,
+        )
+
+        for _p in products_payload:
+            try:
+                _scan = deep_scan_results.get(_p.get('name', ''), {}) or {}
+                _p['_market_tester_price'] = _scan.get('tester_price')
+                _p['_market_tester_source'] = _scan.get('tester_source_store', '')
+                _p['_market_tester_url'] = _scan.get('tester_url', '')
+                _p['_market_tester_available'] = bool(
+                    _scan.get('tester_available_in_market', False)
+                )
+            except Exception:
+                continue
+
+        raw_missing = discover_missing_brand_products(
+            brand_name=current_brand,
+            api_key=_serper_key,
+            competitors_list=COMPETITOR_STORES,
+            existing_products=products_payload,
+            similarity_threshold=0.85,
+        )
+        confirmed_missing_products = filter_external_missing_products(
+            raw_missing, products_payload, similarity_threshold=0.85
+        )
+        st.session_state[f'_confirmed_missing_{current_brand}'] = confirmed_missing_products
+        scan_status.markdown(
+            f"✅ المسح العميق انتهى — {len(confirmed_missing_products)} منتج ناقص محتمل"
+        )
+    except Exception as _e:
+        logger.error("Deep scan failed for %s: %s", current_brand, _e)
+        st.warning(f"⚠️ المسح العميق فشل جزئياً: {_e}")
+else:
+    if not _serper_key:
+        st.info("ℹ️ مفتاح Serper.dev غير مُعدّ — تخطّي المسح العميق.")
 
 BATCH_SIZE = 15
 MAX_PARALLEL = 3
