@@ -5,13 +5,18 @@ import io
 import os
 import re
 import time
+import logging
+import statistics
 import threading
+import requests
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from difflib import SequenceMatcher
 from google import genai
 from google.genai import types as genai_types
 from openpyxl import load_workbook
+
+logger = logging.getLogger(__name__)
 
 # ─── PAGE CONFIG ─────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -689,6 +694,86 @@ def fill_tester_template_complete(
     return html
 
 SYSTEM_INSTRUCTION_TEMPLATE = """## هويتك ومهمتك
+أنت **محرّر محتوى احترافي** متخصص في العطور لمتجر مهووس السعودي على منصة سلة.
+**أنت لا تبحث في الإنترنت ولا تخترع منتجات أو أسعار.** أنا سأزودك بقائمة المنتجات الناقصة المؤكدة (مع روابطها الفعلية وأسعارها الحقيقية من Serper.dev) وبسعر التستر المحسوب مسبقاً عبر خوارزمية ذكية. مهمتك الوحيدة: صياغة وصف احترافي وتعبئة الحقول التسويقية وإرجاع JSON متوافق مع المخطط.
+
+## ❌ ممنوع منعاً باتاً
+- اختراع أي منتج لم أزودك به في قائمة `confirmed_missing_products`.
+- تغيير الأسعار التي زودتك بها (`original_price` أو `new_price` أو `competitor_price`).
+- تغيير الروابط (`source_store`, `image_url`) أو إنشاء روابط من خيالك.
+- البحث في الإنترنت أو الاستشهاد بمصادر خارجية.
+- إعادة كتابة أو تحديث وصف أي منتج موجود مسبقاً (`products_updated` يجب أن يكون `[]` دائماً).
+- اقتراح منتج موجود مسبقاً في قائمتنا ولو بصيغة مختلفة.
+
+## مهامك الفعلية (الوحيدة)
+1. **التساتر الإلزامية (`testers_to_add`):** لكل عطر أساسي في قائمتنا ليس له تستر:
+   - استخدم `tester_price` المحسوب مسبقاً عبر خوارزمية التسعير الذكية كـ `new_price`.
+   - استخدم `competitor_avg_price` المُمرَّر إليك (إن وُجد) كـ `competitor_price`، وإلا 0.
+   - انسخ صورة العطر الأساسي حرفياً.
+   - اصنع `name` بصيغة «تستر [اسم العطر]» (تستر في البداية لا النهاية).
+   - اكتب `new_description` و `seo_title` و `seo_description` فقط.
+2. **المنتجات الناقصة (`missing_products`):** لن تكتشفها بنفسك. سأمررها لك جاهزة في `confirmed_missing_products` (مخرجات Serper بعد فلترة المكررات). مهمتك:
+   - انسخ `name`, `price`, `source_store`, `image_url_1` كما هي حرفياً.
+   - اكتب `description` احترافياً (200–350 كلمة) و `seo_title` و `seo_description`.
+   - عبّئ `concentration`, `gender`, `size_ml` بناءً على معرفتك بالعطر؛ وإن لم تكن متأكداً، اتركها فارغة. **لا تخمّن.**
+3. **التساتر اليتيمة (`orphan_testers`):** كما هو موضح أدناه.
+
+## استثناءات (لا تُضِف تستراً لها أبداً)
+1. **الأطقم/المجموعات:** أي اسم يحتوي «طقم/أطقم/مجموعة/Set/Kit/Bundle/Collection/Box» أو «N قطع» أو «+».
+2. **البدائل (Dupes):** أي اسم يحتوي «بديل/مشابه/شبيه/مستوحى/مقلد/dupe/inspired by/clone/replica».
+3. **الأحجام الصغيرة المكررة:** إذا توفر العطر بأحجام متعددة، أضف تستراً للحجم الأكبر فقط.
+
+## قاعدة اسم التستر
+- يجب أن يبدأ بـ «تستر» وليس في النهاية.
+- مثال صحيح: «تستر باكو رابان فانتوم 100مل».
+- مثال خاطئ: «عطر باكو رابان فانتوم 100مل تستر».
+
+## قاعدة صورة التستر
+- تُؤخذ حرفياً من حقل `image_url` للعطر الأساسي. لا تبحث عن صورة جديدة.
+- إذا تعددت الصور بفواصل، انسخها كلها.
+
+## التساتر اليتيمة (Orphan Testers)
+- مرّ على كل تستر في قائمتنا.
+- إن لم يوجد عطر أساسي مقابل، أضِفه إلى `orphan_testers` فقط (لا تخترع له منتجاً أساسياً).
+
+## أسلوب الكتابة — تعلّم من هذه الأمثلة الحقيقية
+{writing_dna}
+
+## قوالب HTML الإلزامية للمنتجات الجديدة فقط
+### قالب العطور الجديدة/الأساسية:
+{HTML_TEMPLATE_NEW}
+
+### قالب التساتر الجديدة:
+{HTML_TEMPLATE_TESTER}
+
+## 🚫 ممنوع التكرار الداخلي
+- لا تكرر نفس العطر/التستر داخل المصفوفة.
+- لا تكرر `base_product_id` في `testers_to_add`.
+- لا تكرر منتجاً في `missing_products` بصيغ مختلفة (عربي/إنجليزي/أحجام).
+
+## 🏷️ source_store و image_url
+- انسخهما حرفياً من `confirmed_missing_products` التي زودتك بها — الروابط مأخوذة من Serper وموثوقة.
+- ممنوع اختراع متجر أو رابط.
+
+## 📐 صرامة مخطط JSON
+- جميع المفاتيح إلزامية في كل عنصر؛ القيم الفارغة تُمثَّل بـ "" أو 0 أو false (لا تحذف المفتاح).
+- جميع `missing_products` يجب أن تحتوي `image_url_1` و `image_url_2` (الثاني قد يكون "").
+- جميع `testers_to_add` يجب أن تحتوي `competitor_price` و `tester_available_in_market`.
+
+## المتاجر السعودية المرجعية (للتعرّف على source_store حصراً):
+{competitors_json}
+
+## تعليمات الإخراج
+- JSON صارم فقط، يبدأ بـ {{ وينتهي بـ }}
+- لا markdown، لا نص خارج JSON
+- products_updated: [] دائماً
+- جميع الأسعار بالريال السعودي **منقولة كما زُوِّدت بها — لا تعديل**
+"""
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  Legacy template (محتفظ بنسخة إن احتجناها لاحقاً، لكن المستخدم هو القالب أعلاه)
+# ═════════════════════════════════════════════════════════════════════════════
+_LEGACY_SYSTEM_INSTRUCTION_TEMPLATE_DISABLED = """## هويتك ومهمتك (DEPRECATED)
 أنت **خبير عطور محترف بخبرة 20 سنة** + محلل تنافسي لمتجر مهووس في السوق السعودي.
 مهمتك:
 ١) **إضافة تستر إلزامي** لكل عطر أساسي ليس لديه تستر في قائمتنا (سياسة جديدة).
@@ -992,15 +1077,185 @@ def _extract_size_for_grouping(name: str) -> int:
     return max(sizes) if sizes else 0
 
 
-def calc_tester_price(original_price: float) -> float:
-    """قاعدة التسعير الداخلية للتسات: الأقل من 1000 ريال يخصم 70، والباقي 150."""
+# ═════════════════════════════════════════════════════════════════════════════
+#  Serper.dev — محرك بحث خارجي دقيق لقتل الهلوسة
+# ═════════════════════════════════════════════════════════════════════════════
+SERPER_ENDPOINT = "https://google.serper.dev/search"
+SAUDI_DOMAINS_FILTER = (
+    "(site:noon.com/saudi-ar OR site:goldenscent.com "
+    "OR site:niceonesa.com OR site:sa.sephora.com)"
+)
+_SERPER_PRICE_RX = re.compile(
+    r"(?:SAR|ر\.?س|ريال|SR)\s*([0-9]{1,5}(?:[.,][0-9]{1,2})?)"
+    r"|([0-9]{1,5}(?:[.,][0-9]{1,2})?)\s*(?:SAR|ر\.?س|ريال|SR)",
+    re.IGNORECASE,
+)
+_ALLOWED_SOURCES = ("noon.com", "goldenscent.com", "niceonesa.com", "sephora.com")
+
+
+def _extract_price_from_text(text):
+    if text is None:
+        return None
+    m = _SERPER_PRICE_RX.search(str(text))
+    if not m:
+        return None
+    raw = m.group(1) or m.group(2)
     try:
-        p = float(original_price or 0)
+        v = float(raw.replace(",", "."))
+        if 10.0 <= v <= 50000.0:
+            return round(v, 2)
+    except (ValueError, TypeError):
+        return None
+    return None
+
+
+def fetch_market_data(query: str, api_key: str) -> list:
+    """يبحث في المتاجر السعودية الكبرى عبر Serper.dev ويُرجع نتائج دقيقة فقط.
+
+    Returns:
+        list[dict]: عناصر تحتوي name, price (float), url, source.
+        تُستبعد أي نتيجة لا يمكن استخراج سعر رقمي صريح منها (لمنع الهلوسة).
+    """
+    if not query or not api_key:
+        logger.warning("fetch_market_data: query أو api_key فارغ.")
+        return []
+
+    full_query = f"{str(query).strip()} {SAUDI_DOMAINS_FILTER}"
+    headers = {"X-API-KEY": api_key, "Content-Type": "application/json"}
+    payload = {"q": full_query, "gl": "sa", "hl": "ar", "num": 10}
+
+    try:
+        resp = requests.post(
+            SERPER_ENDPOINT,
+            headers=headers,
+            data=json.dumps(payload),
+            timeout=15,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except requests.exceptions.Timeout:
+        logger.error("Serper timeout: %s", query)
+        return []
+    except requests.exceptions.HTTPError as e:
+        status = getattr(getattr(e, 'response', None), 'status_code', '?')
+        logger.error("Serper HTTP %s: %s", status, e)
+        return []
+    except (requests.exceptions.RequestException, ValueError) as e:
+        logger.error("Serper request failed: %s", e)
+        return []
+
+    organic = data.get("organic", []) or []
+    results = []
+    for item in organic:
+        try:
+            title = (item.get("title") or "").strip()
+            link = (item.get("link") or "").strip()
+            snippet = (item.get("snippet") or "").strip()
+            if not title or not link:
+                continue
+            source = next((d for d in _ALLOWED_SOURCES if d in link), None)
+            if not source:
+                continue
+            price = (
+                _extract_price_from_text(snippet)
+                or _extract_price_from_text(title)
+                or _extract_price_from_text(item.get("price"))
+            )
+            if price is None:
+                continue
+            results.append({
+                "name": title,
+                "price": price,
+                "url": link,
+                "source": source,
+            })
+        except Exception as e:
+            logger.warning("تخطي نتيجة Serper فاسدة: %s", e)
+            continue
+
+    logger.info(
+        "Serper: %d نتيجة دقيقة من %d لـ '%s'",
+        len(results), len(organic), query,
+    )
+    return results
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  خوارزمية التسعير الذكي للتساتر
+# ═════════════════════════════════════════════════════════════════════════════
+
+def _remove_outliers_iqr(prices: list) -> list:
+    """يستبعد القيم الشاذة بطريقة IQR. للعينات < 4 تُرجع كما هي."""
+    if len(prices) < 4:
+        return list(prices)
+    s = sorted(prices)
+    q1 = statistics.quantiles(s, n=4)[0]
+    q3 = statistics.quantiles(s, n=4)[2]
+    iqr = q3 - q1
+    low, high = q1 - 1.5 * iqr, q3 + 1.5 * iqr
+    cleaned = [p for p in s if low <= p <= high]
+    return cleaned or s
+
+
+def _classic_tester_rule(original_price: float) -> float:
+    """القاعدة الكلاسيكية: -70 للأقل من 1000، -150 لـ ≥ 1000."""
+    if original_price >= 1000:
+        return max(round(original_price - 150, 2), 1.0)
+    return max(round(original_price - 70, 2), 1.0)
+
+
+def calculate_smart_tester_price(original_price: float,
+                                 competitor_prices_list: list = None) -> float:
+    """التسعير الذكي للتساتر — يحمي الهامش ويضمن التنافسية.
+
+    1) قائمة فارغة                → القاعدة الكلاسيكية.
+    2) متوسط السوق < 60% من الأصلي → حرق أسعار، طبّق الكلاسيكية.
+    3) خلاف ذلك                  → متوسط السوق × 0.95 (مع كاب على original_price).
+    """
+    try:
+        original_price = float(original_price or 0)
+        if original_price <= 0:
+            return 0.0
     except (TypeError, ValueError):
-        p = 0.0
-    if p >= 1000:
-        return max(p - 150, 0)
-    return max(p - 70, 0)
+        logger.error("سعر أصلي غير صالح: %r", original_price)
+        return 0.0
+
+    if not competitor_prices_list:
+        return _classic_tester_rule(original_price)
+
+    try:
+        valid = [float(p) for p in competitor_prices_list
+                 if isinstance(p, (int, float)) and float(p) > 0]
+    except (TypeError, ValueError):
+        valid = []
+
+    if not valid:
+        return _classic_tester_rule(original_price)
+
+    cleaned = _remove_outliers_iqr(valid)
+    market_avg = statistics.mean(cleaned)
+
+    safety_threshold = original_price * 0.60
+    if market_avg < safety_threshold:
+        logger.info(
+            "حرق أسعار مكتشف: avg=%.2f < %.2f. تطبيق الكلاسيكية.",
+            market_avg, safety_threshold,
+        )
+        return _classic_tester_rule(original_price)
+
+    competitive = market_avg * 0.95
+    final_price = max(round(min(competitive, original_price), 2), 1.0)
+    logger.info(
+        "تسعير ذكي: avg=%.2f، تنافسي=%.2f، نهائي=%.2f",
+        market_avg, competitive, final_price,
+    )
+    return final_price
+
+
+def calc_tester_price(original_price: float,
+                      competitor_prices_list: list = None) -> float:
+    """Wrapper توافقي للاستدعاءات القديمة — يفوّض للخوارزمية الذكية."""
+    return calculate_smart_tester_price(original_price, competitor_prices_list)
 
 
 def build_tester_name(base_name: str) -> str:
@@ -1492,6 +1747,74 @@ def filter_duplicates(result: dict, existing_products: list,
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+#  filter_external_missing_products — تصفية مخرجات Serper ضد منتجات سلة
+# ═════════════════════════════════════════════════════════════════════════════
+
+def filter_external_missing_products(missing_products: list,
+                                     existing_products: list,
+                                     similarity_threshold: float = 0.85) -> list:
+    """يصفّي مخرجات `fetch_market_data` ضد المنتجات الموجودة في سلة.
+
+    أي عنصر هيكله الصوتي (عبر `_normalize_perfume_name`) يطابق ≥ 85% منتجاً
+    موجوداً → يُسقط فوراً لمنع التكرار.
+    """
+    if not missing_products:
+        return []
+    if not existing_products:
+        return list(missing_products)
+
+    existing_keys = []
+    for p in existing_products:
+        try:
+            nm = p.get('name', '') if isinstance(p, dict) else ''
+            sk = _normalize_perfume_name(nm)
+            try:
+                sz = _extract_size_ml(nm)
+            except Exception:
+                sz = None
+            if sk:
+                existing_keys.append((sk, sz))
+        except (AttributeError, TypeError):
+            continue
+
+    kept, dropped = [], 0
+    for mp in missing_products:
+        try:
+            cand_name = mp.get('name', '') if isinstance(mp, dict) else ''
+            cand_sk = _normalize_perfume_name(cand_name)
+            try:
+                cand_sz = _extract_size_ml(cand_name)
+            except Exception:
+                cand_sz = None
+            if not cand_sk:
+                dropped += 1
+                continue
+
+            is_dup = False
+            for ek, es in existing_keys:
+                if cand_sz and es and cand_sz != es:
+                    continue
+                if _name_similarity(cand_sk, ek) >= similarity_threshold:
+                    is_dup = True
+                    logger.info(
+                        "إسقاط مكرر خارجي: '%s' ≈ موجود في سلة (sk=%s)",
+                        cand_name, ek,
+                    )
+                    break
+
+            if is_dup:
+                dropped += 1
+            else:
+                kept.append(mp)
+        except Exception as e:
+            logger.warning("خطأ في تصفية منتج خارجي: %s", e)
+            continue
+
+    logger.info("filter_external: أُبقي %d وأُسقط %d.", len(kept), dropped)
+    return kept
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 #  ⭐ شبكة الأمان: ضمان وجود تستر لكل عطر أساسي بدون تستر
 # ═════════════════════════════════════════════════════════════════════════════
 
@@ -1918,16 +2241,14 @@ def call_gemini_brand(
   ]
 }}"""
 
+    # تمت إزالة google_search نهائياً — البحث صار خارجياً عبر Serper.dev
+    # قبل استدعاء Gemini. مهمة Gemini الآن صياغة المحتوى فقط، JSON صارم.
     config_kwargs = dict(
         system_instruction=system_instruction,
         temperature=0.0,
         max_output_tokens=65536,
+        response_mime_type='application/json',
     )
-    if use_grounding:
-        config_kwargs['tools'] = [genai_types.Tool(google_search=genai_types.GoogleSearch())]
-    else:
-        config_kwargs['response_mime_type'] = 'application/json'
-
     config = genai_types.GenerateContentConfig(**config_kwargs)
 
     last_err = None
